@@ -1,0 +1,13 @@
+# M1 CLI 最小闭环核心依赖
+edge-tts~=7.2
+openai~=2.6
+pydantic~=2.12
+pydantic-settings~=2.12
+# M2+ 备用(见 docs/02 §1,一次装齐避免后续动环境)
+fastapi~=0.128
+uvicorn[standard]~=0.38
+sqlalchemy[asyncio]~=2.0
+aiosqlite~=0.21
+alembic~=1.17
+pydub~=0.25
+audioop-lts~=0.2

@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1115">
+  <title>DriveCast</title>
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+  <link rel="stylesheet" href="/static/css/review.css">
+</head>
+<body>
+  <div id="app">
+    <header class="app-header">
+      <div class="container">
+        <a href="#/" class="brand">DriveCast</a>
+        <nav class="nav-tabs">
+          <a href="#/" class="nav-tab" :class="{ active: route === 'home' }">首页</a>
+          <a href="#/create" class="nav-tab" :class="{ active: route === 'create' }">新建</a>
+          <a href="#/review" class="nav-tab" :class="{ active: route === 'review' }">复习</a>
+          <a v-if="hasActivePlayer" :href="'#/play/' + player.episodeId + '?plan=' + player.planId" class="nav-tab" :class="{ active: route === 'play' }">播放</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="container">
+      <!-- 首页 -->
+      <section v-if="route === 'home'" key="home" class="fade-in">
+        <h1 class="page-title">今日学习</h1>
+        <div v-if="plansLoading" class="loading">加载中…</div>
+        <div v-else-if="!inProgressPlans.length" class="empty-state">
+          <p>还没有进行中的计划</p>
+          <button @click="go('/create')" class="btn btn-primary btn-lg btn-block">创建学习计划</button>
+        </div>
+        <div v-else>
+          <div v-for="plan in inProgressPlans" :key="plan.id" class="card plan-card">
+            <div>
+              <div class="card-title">{{ plan.title }}</div>
+              <div class="card-meta">
+                {{ planProgress(plan).ready }}/{{ planProgress(plan).total }} 集已就绪
+                · 已听 {{ listenedCount(plan) }} 集
+                · 今日待复习 {{ todayDueCount }} 题
+              </div>
+            </div>
+            <div class="progress-bar">
+              <div
+                class="fill"
+                :class="{ success: planProgress(plan).percent === 100 }"
+                :style="{ width: planProgress(plan).percent + '%' }"
+              ></div>
+            </div>
+            <button @click="continuePlan(plan)" class="btn btn-primary btn-lg btn-block">
+              {{ planProgress(plan).ready > 0 ? '继续听' : '查看进度' }}
+            </button>
+          </div>
+          <div style="text-align:center; margin-top: 16px;">
+            <a href="#/create" class="btn btn-ghost">+ 新建计划</a>
+          </div>
+        </div>
+      </section>
+
+      <!-- 创建计划 -->
+      <section v-if="route === 'create'" key="create" class="fade-in">
+        <h1 class="page-title">创建学习计划</h1>
+        <div class="form-group">
+          <label class="form-label" for="theme">学习主题</label>
+          <input
+            id="theme"
+            v-model="createForm.title"
+            type="text"
+            class="form-input"
+            placeholder="例如：Go GC 调优 / 分布式一致性"
+          >
+        </div>
+        <div class="form-group">
+          <label class="form-label">内容方向</label>
+          <div class="direction-grid">
+            <div
+              v-for="d in DIRECTIONS"
+              :key="d.key"
+              class="direction-option"
+              :class="{ active: createForm.direction === d.key }"
+              @click="createForm.direction = d.key"
+            >
+              {{ d.label }}
+            </div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">集数：{{ createForm.episodeCount }} 集</label>
+          <input
+            v-model.number="createForm.episodeCount"
+            type="range"
+            min="4"
+            max="12"
+            step="1"
+            class="form-input"
+          >
+        </div>
+        <div class="form-group">
+          <label class="form-label">目标时长</label>
+          <div class="form-input" style="display:flex; align-items:center;">15 分钟 / 集</div>
+        </div>
+        <button
+          @click="submitCreate"
+          :disabled="creating"
+          class="btn btn-primary btn-lg btn-block"
+        >
+          {{ creating ? '创建中…' : '生成计划' }}
+        </button>
+      </section>
+
+      <!-- 计划详情 -->
+      <section v-if="route === 'plan'" key="plan" class="fade-in">
+        <div v-if="planLoading" class="loading">加载计划…</div>
+        <div v-else-if="planError" class="error">{{ planError }}</div>
+        <div v-else-if="plan">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap: 12px;">
+            <h1 class="page-title" style="margin-bottom: 8px;">{{ plan.title }}</h1>
+            <span class="badge" :class="'badge-' + (plan.status || 'draft')">{{ plan.status || 'draft' }}</span>
+          </div>
+          <div class="card-meta" style="margin-bottom: 8px;">
+            {{ planProgress(plan).ready }}/{{ planProgress(plan).total }} 集已就绪
+          </div>
+          <div class="progress-bar" style="margin-bottom: 24px;">
+            <div
+              class="fill"
+              :class="{ success: planProgress(plan).percent === 100 }"
+              :style="{ width: planProgress(plan).percent + '%' }"
+            ></div>
+          </div>
+
+          <div class="episode-list">
+            <div
+              v-for="ep in plan.episodes"
+              :key="ep.id"
+              class="episode-item"
+              :class="{ ready: ep.status === 'ready', highlight: ep._highlight }"
+            >
+              <div class="episode-seq">{{ ep.seq }}</div>
+              <div class="episode-info">
+                <div class="episode-title">{{ ep.title }}</div>
+                <div class="episode-status-row">
+                  <span
+                    class="badge"
+                    :class="['badge-' + (ep.status || 'pending'), ep.status !== 'ready' && ep.status !== 'failed' ? 'badge-pulse' : '']"
+                  >
+                    {{ STATUS_LABELS[ep.status] || ep.status }}
+                  </span>
+                  <span v-if="ep.duration_sec" class="text-muted">{{ formatTime(ep.duration_sec) }}</span>
+                  <span v-if="ep.percent != null" class="text-muted">{{ ep.percent }}%</span>
+                </div>
+              </div>
+              <div class="episode-actions">
+                <button
+                  v-if="ep.status === 'ready'"
+                  @click="playFromPlan(ep.id)"
+                  class="btn btn-primary"
+                  aria-label="播放"
+                >▶</button>
+                <button
+                  v-if="ep.status === 'failed'"
+                  @click="retryEpisode(ep.id)"
+                  class="btn btn-danger"
+                  aria-label="重试"
+                >↻</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 播放页 -->
+      <section v-if="route === 'play'" key="play" class="fade-in player-page">
+        <div class="player-meta">
+          <div class="player-plan">
+            {{ player.plan?.title || '' }}
+            <span v-if="player.episode?.seq">· 第 {{ player.episode.seq }} 集</span>
+          </div>
+          <h1 class="player-title">{{ player.episode?.title || '选择一集开始收听' }}</h1>
+          <div class="player-tags">
+            <span v-if="player.episode?.status" class="tag">
+              {{ STATUS_LABELS[player.episode.status] || player.episode.status }}
+            </span>
+            <span v-for="tag in (player.episode?.objectives || [])" :key="tag" class="tag">#{{ tag }}</span>
+          </div>
+        </div>
+
+        <div class="player-progress-wrap" @click="onProgressClick">
+          <div
+            class="player-progress"
+            role="slider"
+            aria-label="播放进度"
+            :aria-valuenow="Math.floor(player.currentTime)"
+            :aria-valuemax="Math.floor(player.duration)"
+          >
+            <div
+              class="buffered"
+              :style="{ width: (player.buffered / (player.duration || 1) * 100) + '%' }"
+            ></div>
+            <div
+              class="played"
+              :style="{ width: (player.currentTime / (player.duration || 1) * 100) + '%' }"
+            ></div>
+            <div
+              v-for="(chapter, index) in player.chapters"
+              :key="chapter.start_sec + '-' + index"
+              class="chapter-marker"
+              :class="{ active: player.currentChapterIndex === index }"
+              :style="{ left: (chapter.start_sec / (player.duration || 1) * 100) + '%' }"
+              :title="chapter.title + ' · ' + formatTime(chapter.start_sec)"
+            ></div>
+            <div
+              class="knob"
+              :style="{ left: (player.currentTime / (player.duration || 1) * 100) + '%' }"
+            ></div>
+          </div>
+        </div>
+        <div class="player-time">
+          <span>{{ formatTime(player.currentTime) }}</span>
+          <span>{{ formatTime(player.duration) }}</span>
+        </div>
+
+        <div v-if="player.error" class="error player-error">{{ player.error }}</div>
+
+        <div class="player-controls">
+          <button class="player-btn skip" @click="seek(-15)" aria-label="后退 15 秒">−15s</button>
+          <button
+            class="player-btn play"
+            @click="togglePlay"
+            :aria-label="player.playing ? '暂停' : '播放'"
+          >
+            <span v-if="player.playing">⏸</span>
+            <span v-else>▶</span>
+          </button>
+          <button class="player-btn skip" @click="seek(15)" aria-label="前进 15 秒">+15s</button>
+        </div>
+
+        <section v-if="player.chapters.length" class="player-panel chapters-panel" aria-labelledby="chapters-title">
+          <div class="player-panel-heading">
+            <h2 id="chapters-title">本集章节</h2>
+            <span>{{ player.chapters.length }} 段</span>
+          </div>
+          <div class="chapter-list">
+            <button
+              v-for="(chapter, index) in player.chapters"
+              :key="chapter.start_sec + '-' + index"
+              class="chapter-jump"
+              :class="{ active: player.currentChapterIndex === index }"
+              @click="player.jumpToChapter(chapter.start_sec)"
+            >
+              <span class="chapter-time">{{ formatTime(chapter.start_sec) }}</span>
+              <span class="chapter-title">{{ chapter.title }}</span>
+              <span aria-hidden="true">›</span>
+            </button>
+          </div>
+        </section>
+
+        <section v-if="player.audioMetaLoading || player.audioMetaLoaded" class="player-panel audio-insights" aria-labelledby="audio-insights-title">
+          <div class="player-panel-heading">
+            <h2 id="audio-insights-title">音频信息</h2>
+            <span v-if="player.audioMetaLoading">读取中…</span>
+          </div>
+          <div v-if="!player.audioMetaLoading && player.quality" class="quality-summary">
+              <div class="quality-status" :class="'quality-' + player.quality.status">
+                {{ player.quality.status === 'passed' ? '质检通过' : player.quality.status === 'warning' ? '质检有提醒' : player.quality.status === 'failed' ? '质检未通过' : '部分指标待检测' }}
+              </div>
+              <div class="quality-checks">
+                <span :class="{ pass: player.quality.checks?.duration === true, warn: player.quality.checks?.duration === false }">时长</span>
+                <span :class="{ pass: player.quality.checks?.clipping === true, warn: player.quality.checks?.clipping === false }">削波</span>
+                <span :class="{ pass: player.quality.checks?.chunks === true, warn: player.quality.checks?.chunks === false }">分段</span>
+              </div>
+              <ul v-if="player.quality.messages?.length" class="quality-messages">
+                <li v-for="message in player.quality.messages" :key="message">{{ message }}</li>
+              </ul>
+            </div>
+          <div v-if="!player.audioMetaLoading && player.durationEstimate?.actual_sec" class="duration-calibration">
+              <span>实测 {{ formatTime(player.durationEstimate.actual_sec) }}</span>
+              <span v-if="player.durationEstimate.estimated_sec">目标 {{ formatTime(player.durationEstimate.estimated_sec) }}</span>
+              <span v-if="player.durationEstimate.error_percent != null" :class="{ warn: Math.abs(player.durationEstimate.error_percent) >= 10 }">
+                误差 {{ player.durationEstimate.error_percent > 0 ? '+' : '' }}{{ player.durationEstimate.error_percent }}%
+              </span>
+              <span v-else>旧音频暂无目标基线</span>
+              <span v-if="player.durationEstimate.recommended_words_per_min">
+                推荐语速 {{ player.durationEstimate.recommended_words_per_min }} 字/分
+              </span>
+              <span v-else-if="player.durationEstimate.actual_words_per_min">
+                实测语速 {{ player.durationEstimate.actual_words_per_min }} 字/分
+              </span>
+              <span v-if="player.durationEstimate.coefficient_vs_config">
+                配置系数 {{ player.durationEstimate.coefficient_vs_config }}×
+              </span>
+            </div>
+        </section>
+
+        <div class="player-extras">
+          <button class="btn btn-ghost" @click="cycleRate">{{ player.playbackRate }}x</button>
+          <a
+            v-if="player.downloadUrl"
+            class="btn btn-ghost"
+            :href="player.downloadUrl"
+            :download="(player.episode?.title || 'DriveCast') + '.mp3'"
+          >下载 MP3</a>
+          <button class="btn btn-ghost" @click="toggleTranscript">本集文稿</button>
+        </div>
+
+        <div v-if="player.transcriptOpen" class="transcript-drawer">
+          <div v-if="player.scriptLoading" class="text-secondary">加载文稿…</div>
+          <div v-else class="transcript-content">{{ player.script?.content_md || '暂无文稿' }}</div>
+        </div>
+      </section>
+
+      <!-- 题库复习页 -->
+      <section v-if="route === 'review'" key="review" class="fade-in review-page">
+        <div class="review-heading">
+          <div>
+            <div class="review-eyebrow">路上听 · 到站练 · 考前重听</div>
+            <h1 class="page-title">复习闭环</h1>
+          </div>
+          <a href="#/review?section=questions" class="review-due-summary" aria-label="查看今日题目队列">
+            <strong>{{ review.state.dueTodayCount }}</strong>
+            <span>今日到期</span>
+            <small v-if="review.state.overdueCount">含 {{ review.state.overdueCount }} 题逾期</small>
+          </a>
+        </div>
+
+        <div v-if="review.state.notice" class="review-notice" role="status">
+          {{ review.state.notice }}
+        </div>
+
+        <section class="review-section interview-panel" aria-labelledby="interview-title">
+          <div class="review-section-head">
+            <div>
+              <div class="review-kicker">面试冲刺</div>
+              <h2 id="interview-title">设定面试日</h2>
+            </div>
+            <span v-if="review.state.interviewDate" class="sprint-countdown">
+              {{ review.state.daysUntilInterview >= 0 ? 'D-' + review.state.daysUntilInterview : '已过期' }}
+            </span>
+          </div>
+          <p class="review-section-copy">{{ review.state.interviewHint }}</p>
+          <div class="interview-date-row">
+            <label class="sr-only" for="interview-date">面试日期</label>
+            <input
+              id="interview-date"
+              v-model="review.state.interviewDate"
+              :min="review.state.dateMin"
+              type="date"
+              class="form-input interview-date-input"
+            >
+            <button
+              class="btn btn-primary"
+              :disabled="review.state.dateSaving || !review.state.dateDirty"
+              @click="review.saveInterviewDate()"
+            >
+              {{ review.state.dateSaving ? '保存中…' : '保存日期' }}
+            </button>
+            <button
+              v-if="review.state.savedInterviewDate"
+              class="btn btn-ghost"
+              :disabled="review.state.dateSaving"
+              @click="review.clearInterviewDate()"
+            >关闭冲刺</button>
+          </div>
+          <div v-if="review.state.dateError" class="review-inline-error">{{ review.state.dateError }}</div>
+        </section>
+
+        <section v-if="review.state.savedInterviewDate" class="review-section sprint-panel" aria-labelledby="sprint-title">
+          <div class="review-section-head">
+            <div>
+              <div class="review-kicker">考前 3 天</div>
+              <h2 id="sprint-title">重听清单</h2>
+            </div>
+            <div v-if="review.state.sprintItemCount" class="sprint-progress-text">
+              {{ review.state.sprintDoneCount }}/{{ review.state.sprintItemCount }} 已完成
+            </div>
+          </div>
+          <div v-if="review.state.sprintItemCount" class="progress-bar sprint-progress" aria-hidden="true">
+            <div
+              class="fill success"
+              :style="{ width: (review.state.sprintDoneCount / review.state.sprintItemCount * 100) + '%' }"
+            ></div>
+          </div>
+          <div v-if="review.state.sprintLoading" class="review-compact-state">正在生成冲刺清单…</div>
+          <div v-else-if="review.state.sprintError" class="review-inline-error">
+            冲刺清单暂不可用：{{ review.state.sprintError }}
+          </div>
+          <div v-else-if="!review.state.sprintGroups.length" class="review-compact-state">
+            暂无需要冲刺的薄弱题，继续保持。
+          </div>
+          <div v-else class="sprint-groups">
+            <article v-for="group in review.state.sprintGroups" :key="group.direction" class="sprint-group">
+              <header class="sprint-group-head">
+                <div>
+                  <h3>{{ directionNames[group.direction] || group.direction }}</h3>
+                  <span>{{ group.weak_question_count || group.items.length }} 个薄弱点</span>
+                </div>
+                <span class="sprint-group-rank">优先级 {{ group.items.length }}</span>
+              </header>
+              <ul class="sprint-checklist">
+                <li
+                  v-for="(item, index) in group.items"
+                  :key="review.sprintItemKey(item, group.direction, index)"
+                  :class="{ done: review.isSprintDone(item, group.direction, index) }"
+                >
+                  <button
+                    class="sprint-check"
+                    :aria-label="review.isSprintDone(item, group.direction, index) ? '标记为未完成' : '标记为完成'"
+                    :aria-pressed="review.isSprintDone(item, group.direction, index)"
+                    @click="review.toggleSprintItem(item, group.direction, index)"
+                  >
+                    <span aria-hidden="true">{{ review.isSprintDone(item, group.direction, index) ? '✓' : '' }}</span>
+                  </button>
+                  <div class="sprint-item-copy">
+                    <strong>{{ item.episode_title }}</strong>
+                    <span>
+                      <template v-if="item.scheduled_for">{{ item.scheduled_for.slice(5).replace('-', '月') + '日' }} · </template>
+                      <template v-if="item.kp_name && item.kp_name !== '薄弱知识点'">{{ item.kp_name }}</template>
+                      <template v-if="item.weak_question_count">{{ item.kp_name && item.kp_name !== '薄弱知识点' ? ' · ' : '' }}{{ item.weak_question_count }} 道薄弱题</template>
+                    </span>
+                  </div>
+                  <a v-if="review.playHref(item)" :href="review.playHref(item)" class="btn sprint-play-link">重听</a>
+                </li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section id="replay-queue" class="review-section replay-queue-panel" aria-labelledby="replay-queue-title">
+          <div class="review-section-head">
+            <div>
+              <div class="review-kicker">持久化排期</div>
+              <h2 id="replay-queue-title">重听任务</h2>
+            </div>
+            <span v-if="review.state.replayQueue.length" class="review-section-count">
+              {{ review.state.replayQueue.length }} 项
+            </span>
+          </div>
+          <p class="review-section-copy">默认展示今天到期的任务；今天为空时预览明日已排任务。</p>
+          <div v-if="review.state.replayQueueLoading" class="review-compact-state">正在读取重听任务…</div>
+          <div v-else-if="review.state.replayQueueError" class="review-inline-error">
+            重听任务暂不可用：{{ review.state.replayQueueError }}
+          </div>
+          <div v-else-if="!review.state.replayQueue.length" class="review-compact-state">
+            暂无已排重听任务。
+          </div>
+          <div v-else class="replay-task-list">
+            <article v-for="item in review.state.replayQueue" :key="item.id || item.kp_id" class="replay-task">
+              <div class="replay-task-main">
+                <div class="replay-task-meta">
+                  <span>{{ item.scheduled_for || '待排期' }}</span>
+                  <span class="replay-status" :class="'status-' + (item.status || 'pending')">
+                    {{ item.status === 'done' ? '已完成' : item.status === 'pending' ? '待重听' : item.status || '未知' }}
+                  </span>
+                  <span v-if="item.duration_sec">约 {{ Math.max(1, Math.round(item.duration_sec / 60)) }} 分钟</span>
+                </div>
+                <h3>{{ item.kp_name }}</h3>
+                <p>{{ item.episode_title }} · {{ item.weak_question_count }} 道薄弱题</p>
+              </div>
+              <a v-if="review.playHref(item)" :href="review.playHref(item)" class="btn btn-primary">播放重听</a>
+              <span v-else class="replay-unavailable">等待计划信息</span>
+            </article>
+          </div>
+        </section>
+
+        <section class="review-section" aria-labelledby="replay-title">
+          <div class="review-section-head">
+            <div>
+              <div class="review-kicker">薄弱点联动</div>
+              <h2 id="replay-title">推荐重听</h2>
+            </div>
+            <span v-if="review.state.recommendations.length" class="review-section-count">
+              {{ review.state.recommendations.length }} 集
+            </span>
+          </div>
+          <p class="review-section-copy">同一知识点累计 2 道及以上“不会/模糊”，优先推荐最短相关集。</p>
+          <div v-if="review.state.recommendationsLoading" class="review-compact-state">正在计算薄弱点…</div>
+          <div v-else-if="review.state.recommendationsError" class="review-inline-error">
+            重听推荐暂不可用：{{ review.state.recommendationsError }}
+          </div>
+          <div v-else-if="!review.state.recommendations.length" class="review-compact-state">
+            暂无重听推荐。完成下面的自测后会自动更新。
+          </div>
+          <div v-else class="replay-grid">
+            <article v-for="item in review.state.recommendations" :key="item.id || item.kp_id || item.episode_id" class="replay-card">
+              <div class="replay-card-top">
+                <span class="mastery-dot" aria-hidden="true"></span>
+                <span>{{ item.weak_question_count }} 道薄弱题</span>
+                <span v-if="item.duration_sec">约 {{ Math.max(1, Math.round(item.duration_sec / 60)) }} 分钟</span>
+              </div>
+              <h3>{{ item.kp_name }}</h3>
+              <p>{{ item.episode_title }}</p>
+              <div class="replay-card-footer">
+                <span>{{ directionNames[item.direction] || item.direction || '综合' }}</span>
+                <a v-if="review.playHref(item)" :href="review.playHref(item)" class="btn btn-primary">播放重听</a>
+                <span v-else class="replay-unavailable">等待播放链接</span>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section id="review-questions" class="review-section review-queue" aria-labelledby="queue-title">
+          <div class="review-section-head review-queue-head">
+            <div>
+              <div class="review-kicker">间隔重复</div>
+              <h2 id="queue-title">今日复习队列</h2>
+            </div>
+            <div class="review-queue-summary">
+              <strong>{{ review.state.filteredCards.length }}</strong>
+              <span>题待刷</span>
+            </div>
+          </div>
+
+          <div class="review-filters" role="group" aria-label="题库筛选">
+            <button
+              class="btn"
+              :class="{ active: review.state.filter === 'all' }"
+              @click="setReviewFilter('all')"
+            >全部到期</button>
+            <button
+              class="btn"
+              :class="{ active: review.state.filter === 'weak' }"
+              @click="setReviewFilter('weak')"
+            >只看薄弱</button>
+            <button
+              v-for="dir in review.state.directions"
+              :key="dir"
+              class="btn"
+              :class="{ active: review.state.filter === dir }"
+              @click="setReviewFilter(dir)"
+            >{{ directionNames[dir] || dir }}</button>
+          </div>
+
+          <div v-if="review.state.loading" class="loading">加载题库…</div>
+          <div v-else-if="review.state.error" class="error">{{ review.state.error }}</div>
+          <div v-else-if="!review.state.filteredCards.length" class="empty-state review-empty">
+            <strong>今日已清空</strong>
+            <span>下一批题会按不会 +1 天、模糊 +2 天、掌握 +7 天到期。</span>
+          </div>
+          <div v-else class="review-card-list">
+            <article
+              v-for="card in review.state.filteredCards"
+              :key="card.id"
+              class="review-card-shell"
+            >
+              <div class="review-card-status">
+                <span class="due-chip" :class="review.dueStatus(card).className">
+                  {{ review.dueStatus(card).label }}
+                </span>
+                <span class="mastery-chip" :class="'mastery-' + (card.mastery || 'unknown')">
+                  {{ masteryLabels[card.mastery || 'unknown'] }}
+                </span>
+                <span class="review-card-count">已复习 {{ card.review_count || 0 }} 次</span>
+              </div>
+              <div
+                class="flashcard"
+                :class="{ flipped: review.state.flipped[card.id] }"
+                @click="review.toggleFlip(card.id)"
+              >
+                <div class="flashcard-inner">
+                  <div class="flashcard-face front">
+                    <div class="flashcard-context">
+                      <span>{{ directionNames[card.direction] || card.direction || '综合' }}</span>
+                      <span v-if="card.plan_title">{{ card.plan_title }}</span>
+                    </div>
+                    <div class="flashcard-question">{{ card.question }}</div>
+                    <div class="flashcard-hint">点击翻面，在脑中先说出“总—分—钩”</div>
+                  </div>
+                  <div class="flashcard-face back" @click.stop>
+                    <div class="flashcard-back-title">答题框架</div>
+                    <ul class="flashcard-framework">
+                      <li v-for="(point, idx) in (card.framework || [])" :key="idx">{{ point }}</li>
+                    </ul>
+                    <div class="flashcard-detail-row">
+                      <span>当前：{{ masteryLabels[card.mastery || 'unknown'] }}</span>
+                      <span v-if="card.last_reviewed_at">上次：{{ review.formatReviewTime(card.last_reviewed_at) }}</span>
+                    </div>
+                    <div class="mastery-actions">
+                      <button
+                        class="btn mastery-action unknown"
+                        :disabled="review.state.grading[card.id]"
+                        @click.stop="review.grade(card.id, 'unknown')"
+                      >{{ review.state.grading[card.id] ? '保存中…' : '不会 · 明天' }}</button>
+                      <button
+                        class="btn mastery-action fuzzy"
+                        :disabled="review.state.grading[card.id]"
+                        @click.stop="review.grade(card.id, 'fuzzy')"
+                      >{{ review.state.grading[card.id] ? '保存中…' : '模糊 · 2 天后' }}</button>
+                      <button
+                        class="btn mastery-action mastered"
+                        :disabled="review.state.grading[card.id]"
+                        @click.stop="review.grade(card.id, 'mastered')"
+                      >{{ review.state.grading[card.id] ? '保存中…' : '掌握 · 7 天后' }}</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="review-card-source">
+                <span>{{ card.episode_title || '来源播客' }}</span>
+                <a
+                  v-if="review.playHref(card)"
+                  :href="review.playHref(card)"
+                >重听本集</a>
+              </div>
+            </article>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <div class="toast" :class="{ show: toast }">{{ toast }}</div>
+  </div>
+
+  <script type="module" src="/static/js/main.js"></script>
+</body>
+</html>
