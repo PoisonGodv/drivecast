@@ -308,6 +308,7 @@
 .player-progress-wrap {
   padding: 24px 16px;
   cursor: pointer;
+  touch-action: none;
 }
 
 .player-progress {
@@ -710,13 +711,8 @@
   }
 }
 
-/* 小屏优化 */
+/* 小屏优化:播放键保持 ≥96px 硬规(docs/04 §2),只压缩间距 */
 @media (max-width: 360px) {
-  .player-btn.play {
-    width: 84px;
-    height: 84px;
-    font-size: 1.9rem;
-  }
   .player-btn.skip {
     width: 64px;
     height: 64px;

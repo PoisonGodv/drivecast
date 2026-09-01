@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import os
 import sqlite3
 import subprocess
@@ -200,7 +201,7 @@ class ReviewMigrationTest(unittest.TestCase):
                 [str(PROJECT_ROOT / ".venv/bin/alembic"), "-c", str(config_path), "upgrade", "0001"],
                 check=True, cwd=PROJECT_ROOT, env=env, capture_output=True, text=True,
             )
-            with sqlite3.connect(db_path) as conn:
+            with contextlib.closing(sqlite3.connect(db_path)) as conn:
                 conn.executescript("""
                     INSERT INTO topic(title, direction) VALUES ('主题', 'backend_arch');
                     INSERT INTO plan(ext_id, topic_id, title) VALUES ('p', 1, '计划');
@@ -211,7 +212,7 @@ class ReviewMigrationTest(unittest.TestCase):
                 [str(PROJECT_ROOT / ".venv/bin/alembic"), "-c", str(config_path), "upgrade", "head"],
                 check=True, cwd=PROJECT_ROOT, env=env, capture_output=True, text=True,
             )
-            with sqlite3.connect(db_path) as conn:
+            with contextlib.closing(sqlite3.connect(db_path)) as conn:
                 question_columns = {row[1] for row in conn.execute("PRAGMA table_info(question)")}
                 audio_columns = {row[1] for row in conn.execute("PRAGMA table_info(audio)")}
                 kp_id = conn.execute("SELECT kp_id FROM question").fetchone()[0]
@@ -236,7 +237,7 @@ class ReviewMigrationTest(unittest.TestCase):
             engine = create_engine(f"sqlite:///{db_path}")
             Base.metadata.create_all(engine)
             engine.dispose()
-            with sqlite3.connect(db_path) as conn:
+            with contextlib.closing(sqlite3.connect(db_path)) as conn:
                 conn.executescript("""
                     INSERT INTO topic(title, direction) VALUES ('主题', 'backend_arch');
                     INSERT INTO plan(ext_id, topic_id, title) VALUES ('p', 1, '计划');
@@ -251,7 +252,7 @@ class ReviewMigrationTest(unittest.TestCase):
                 """)
 
             self._upgrade(config_path, "head")
-            with sqlite3.connect(db_path) as conn:
+            with contextlib.closing(sqlite3.connect(db_path)) as conn:
                 conn.execute("""
                     INSERT INTO review_replay(
                       kp_id, episode_id, scheduled_for, weak_question_count
@@ -297,14 +298,14 @@ class ReviewMigrationTest(unittest.TestCase):
                 [str(PROJECT_ROOT / ".venv/bin/alembic"), "-c", str(config_path), "upgrade", "0002"],
                 check=True, cwd=PROJECT_ROOT, capture_output=True, text=True,
             )
-            with sqlite3.connect(db_path) as conn:
+            with contextlib.closing(sqlite3.connect(db_path)) as conn:
                 conn.execute("ALTER TABLE audio ADD COLUMN meta_json TEXT NOT NULL DEFAULT '{}'")
                 conn.execute("ALTER TABLE audio ADD COLUMN quality_status TEXT NOT NULL DEFAULT 'unknown'")
             subprocess.run(
                 [str(PROJECT_ROOT / ".venv/bin/alembic"), "-c", str(config_path), "upgrade", "head"],
                 check=True, cwd=PROJECT_ROOT, capture_output=True, text=True,
             )
-            with sqlite3.connect(db_path) as conn:
+            with contextlib.closing(sqlite3.connect(db_path)) as conn:
                 version = conn.execute("SELECT version_num FROM alembic_version").fetchone()[0]
                 columns = [row[1] for row in conn.execute("PRAGMA table_info(audio)")]
             self.assertEqual(version, "0004")

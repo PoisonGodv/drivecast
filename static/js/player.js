@@ -286,9 +286,6 @@ export async function loadEpisode(episodeId, plan) {
   player.state.downloadUrl = `/api/episodes/${episodeId}/audio/download`
   player.state.sizeBytes = 0
 
-  store.setActiveEpisode(String(episodeId))
-  if (plan?.id) store.setLastPlayedPlan(plan.id)
-
   const saved = store.getPosition(String(episodeId))
   const start = ep.position_sec || saved || 0
 

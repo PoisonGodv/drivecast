@@ -37,6 +37,7 @@ class TopicOut(BaseModel):
 class PlanCreate(BaseModel):
     topic_id: int = Field(gt=0)
     episode_count: int | None = Field(default=None, ge=4, le=12)
+    target_minutes: int | None = Field(default=None, ge=8, le=25)
 
 
 class PlanGenerateOut(BaseModel):
@@ -99,7 +100,8 @@ async def create_plan(body: PlanCreate) -> dict:
 
     # 计划大纲生成同步完成(一次 LLM 调用),脚本/音频走 job 异步
     plan_rec = await planner.create_plan(
-        topic.title, direction=topic.direction, episode_count=body.episode_count
+        topic.title, direction=topic.direction, episode_count=body.episode_count,
+        target_minutes=body.target_minutes,
     )
 
     async with session() as s:

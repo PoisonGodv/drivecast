@@ -64,11 +64,6 @@ export const api = {
   generateEpisode: (id) =>
     request(`/api/episodes/${id}/generate`, { method: 'POST' }),
 
-  generateAll: (planId) =>
-    request(`/api/plans/${planId}/generate_all`, { method: 'POST' }),
-
-  getJob: (id) => request(`/api/jobs/${id}`),
-
   // 脚本 / 音频 / 进度
   getScript: (id) => request(`/api/episodes/${id}/script`),
 
@@ -82,8 +77,6 @@ export const api = {
 
   // 复习
   getReviewToday: () => request('/api/review/today'),
-
-  listReviewQuestions: () => request('/api/review/questions'),
 
   getReviewWeakPoints: () => request('/api/review/weak-points'),
 

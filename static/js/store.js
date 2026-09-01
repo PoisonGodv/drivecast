@@ -26,22 +26,4 @@ export const store = {
     if (!episodeId || sec == null) return
     localStorage.setItem(`${PREFIX}pos:${episodeId}`, String(Math.floor(sec)))
   },
-
-  getActiveEpisode() {
-    return localStorage.getItem(`${PREFIX}activeEpisode`) || ''
-  },
-
-  setActiveEpisode(episodeId) {
-    if (episodeId) localStorage.setItem(`${PREFIX}activeEpisode`, episodeId)
-    else localStorage.removeItem(`${PREFIX}activeEpisode`)
-  },
-
-  getLastPlayedPlan() {
-    const v = localStorage.getItem(`${PREFIX}lastPlan`)
-    return v ? parseInt(v, 10) : 0
-  },
-
-  setLastPlayedPlan(planId) {
-    if (planId) localStorage.setItem(`${PREFIX}lastPlan`, String(planId))
-  },
 }

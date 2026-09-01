@@ -11,9 +11,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 
-from .config import ensure_data_dirs
+from sqlalchemy import select
+
+from .config import ensure_data_dirs, settings
+from .db import session
+from .library import service as library
+from .models import Episode, Plan
 from .planner import service as planner
 from .schemas import Direction
 from .scriptwriter import service as scriptwriter
@@ -116,12 +122,49 @@ async def cmd_dbsync(args) -> None:
     print(f"共导入 {count} 个计划")
 
 
-def cmd_list(args) -> None:
-    plan = planner.load_plan(args.plan_id)
+def _available_plans_text() -> str:
+    """列出 data/plans/*.json 里的 plan_id 与标题,用于友好报错引导。"""
+    lines = []
+    for plan_file in sorted((settings.data_dir / "plans").glob("plan_*.json")):
+        try:
+            data = json.loads(plan_file.read_text("utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        lines.append(f"  {data.get('plan_id', plan_file.stem)} 「{data.get('title', '')}」")
+    return "\n".join(lines) if lines else "  (plans 目录下还没有计划)"
+
+
+async def _resolve_plan_ext_id(raw: str) -> str:
+    """把 CLI 入参解析成文件态 plan_id:优先已有文件;纯数字按 DB 自增 id 查 ext_id。"""
+    if settings.plan_path(raw).exists():
+        return raw
+    if raw.isdigit():
+        plan = await library.get_plan_by_id(int(raw))
+        if plan is not None and settings.plan_path(plan.ext_id).exists():
+            return plan.ext_id
+    sys.exit(f"找不到计划 '{raw}',现有计划:\n{_available_plans_text()}")
+
+
+async def _db_episode_statuses(plan_ext_id: str) -> dict[str, str]:
+    """查 DB 里该计划各集的真实状态(文件态会滞后);查不到时由调用方回退文件态。"""
+    async with session() as s:
+        result = await s.execute(
+            select(Episode.ext_id, Episode.status)
+            .join(Plan, Plan.id == Episode.plan_id)
+            .where(Plan.ext_id == plan_ext_id)
+        )
+        return dict(result.all())
+
+
+async def cmd_list(args) -> None:
+    plan_ext_id = await _resolve_plan_ext_id(args.plan_id)
+    plan = planner.load_plan(plan_ext_id)
+    db_statuses = await _db_episode_statuses(plan_ext_id)
     print(f"{plan.plan_id} 「{plan.title}」 方向={plan.direction} 创建于 {plan.created_at}")
     for ep in plan.episodes:
+        status = db_statuses.get(ep.episode_id, ep.status)  # DB 优先,回退文件态
         has_script = scriptwriter.load_script(ep.episode_id) is not None
-        print(f"  {ep.seq}. [{ep.status}] {ep.title}  脚本={'✓' if has_script else '✗'}")
+        print(f"  {ep.seq}. [{status}] {ep.title}  脚本={'✓' if has_script else '✗'}")
 
 
 def main() -> None:
@@ -156,7 +199,7 @@ def main() -> None:
 
     args = p.parse_args()
     if args.cmd == "list":
-        return cmd_list(args)
+        return asyncio.run(cmd_list(args))
     asyncio.run({
         "plan": cmd_plan, "script": cmd_script, "tts": cmd_tts, "episode": cmd_episode,
         "generate": cmd_generate, "worker": cmd_worker, "dbsync": cmd_dbsync,

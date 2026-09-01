@@ -42,6 +42,7 @@ const appState = reactive({
     title: '',
     direction: 'backend_arch',
     episodeCount: 6,
+    targetMinutes: 15,
   },
   creating: false,
 
@@ -175,7 +176,7 @@ const appState = reactive({
 
   /* ---------- 创建计划 ---------- */
   async submitCreate() {
-    const { title, direction, episodeCount } = this.createForm
+    const { title, direction, episodeCount, targetMinutes } = this.createForm
     if (!title.trim()) {
       this.showToast('请输入学习主题')
       return
@@ -183,7 +184,7 @@ const appState = reactive({
     this.creating = true
     try {
       const topic = await api.createTopic(title.trim(), direction)
-      const plan = await api.createPlan(topic.id, Number(episodeCount), 15)
+      const plan = await api.createPlan(topic.id, Number(episodeCount), Number(targetMinutes))
       this.createForm.title = ''
       this.showToast('计划创建成功，正在生成')
       this.go(`/plan/${plan.plan_id}`)
@@ -283,10 +284,24 @@ const appState = reactive({
     }
   },
 
-  onProgressClick(event) {
-    const rect = event.currentTarget.getBoundingClientRect()
-    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width))
-    seekToRatio(ratio)
+  /* 进度条按下即定位,按住拖动持续 seek(docs/04 §2) */
+  onProgressDown(event) {
+    const wrap = event.currentTarget
+    const seekFromEvent = (e) => {
+      const rect = wrap.getBoundingClientRect()
+      const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+      seekToRatio(ratio)
+    }
+    seekFromEvent(event)
+    const onMove = (e) => seekFromEvent(e)
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
   },
 
   /* ---------- 复习 ---------- */

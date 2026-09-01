@@ -14,7 +14,7 @@
 | `/` | 首页 | 今日推荐 + 进行中的计划 + 快速入口 |
 | `/create` | 创建计划 | 输入主题 → 选方向 → 定集数 → 确认大纲 |
 | `/plan/:id` | 计划详情 | 剧集列表 + 每集生成状态/进度 + 播放入口 |
-| `/player/:episodeId` | 播放页 | 开车场景核心页(详见 §2) |
+| `#/play/:episodeId` | 播放页 | 开车场景核心页(详见 §2) |
 | `/review` | 题库复习页 | 卡片式自测,按掌握度标记(详见 §4) |
 
 不做注册登录(本地单用户),不做导航栏之外的冗余信息架构。顶部仅 4 个 tab:首页 / 新建 / 复习 / 播放(有在播集时显示)。
@@ -147,7 +147,7 @@ data: {"plan_id": "p1", "ready": 3, "total": 8, "all_done": false}
 - 顶部一条总进度条:`已就绪 3/8 集`,给"边生成边听"一个直观预期。
 - 某集变 `ready` 时,若用户正停留在详情页,该行**轻微高亮 + 提示音**(可关),并把它顶部的"继续播放"按钮点亮。
 - 连接断开:`EventSource` 自动重连;重连后主动拉一次全量计划状态对齐,避免漏事件。
-- 失败集:行尾"重试"按钮,POST `/api/episodes/{id}/regenerate`,不阻塞其他集。
+- 失败集:行尾"重试"按钮,POST `/api/episodes/{id}/generate`,不阻塞其他集。
 
 ---
 
@@ -238,7 +238,7 @@ static/
 | `GET /api/plans/{id}/events` | **SSE** 进度推送 |
 | `GET /api/episodes/{id}/audio` | 音频流(支持 Range,拖动进度条需要) |
 | `GET /api/episodes/{id}/script` | 结构化文稿(知识点/问法/框架) |
-| `POST /api/episodes/{id}/regenerate` | 失败重试 |
+| `POST /api/episodes/{id}/generate` | 失败重试 |
 | `GET/POST /api/cards` · `POST /api/cards/{id}/mastery` | 题库与掌握度（命名以 02 为准:`GET /api/review/today` · `POST /api/questions/{id}/grade`,body `{mastery:"unknown|fuzzy|mastered"}`) |
 | `GET/PUT /api/playback/position` | 播放进度存取 |
 
