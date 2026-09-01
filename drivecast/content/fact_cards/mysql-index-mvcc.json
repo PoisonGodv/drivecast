@@ -1,0 +1,71 @@
+{
+  "slug": "mysql-index-mvcc",
+  "title": "MySQL InnoDB 索引与 MVCC",
+  "direction": "backend_arch",
+  "version": 1,
+  "facts": [
+    {
+      "id": "f01",
+      "claim": "InnoDB 使用聚簇索引，叶子节点直接存储完整行数据（待人工复核）",
+      "detail": "非叶子节点存储索引键；二级索引的叶子节点存储主键值，需要回表查询完整数据。",
+      "source": "MySQL 8.4 Reference Manual – InnoDB Indexes（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f02",
+      "claim": "B+ 树索引保持数据有序，支持高效的范围扫描与顺序 I/O（待人工复核）",
+      "detail": "高扇出降低了树高，减少随机磁盘读取；叶子节点之间通过双向链表连接。",
+      "source": "MySQL 官方文档 / 数据库通用原理（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f03",
+      "claim": "InnoDB 每行记录包含 3 个隐藏列：DB_TRX_ID（6 字节）、DB_ROLL_PTR（7 字节）、DB_ROW_ID（6 字节）",
+      "detail": "DB_TRX_ID 记录最后修改该行的事务 ID；DB_ROLL_PTR 指向 undo log 中的旧版本；DB_ROW_ID 在没有显式主键时作为隐式主键。",
+      "source": "MySQL 8.4 Reference Manual – InnoDB Multi-Versioning（Web 搜索摘要）",
+      "confidence": 1.0
+    },
+    {
+      "id": "f04",
+      "claim": "MVCC 通过 DB_TRX_ID 与 Read View 判断某版本对当前事务是否可见（待人工复核）",
+      "detail": "Read View 维护活跃事务 ID 集合、上限/下限事务 ID；结合 undo log 版本链实现非锁定一致性读。",
+      "source": "MySQL 8.4 Reference Manual – InnoDB Multi-Versioning（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f05",
+      "claim": "REPEATABLE READ 在事务第一次读取时建立快照，整个事务期间复用；READ COMMITTED 每次读取新建快照（待人工复核）",
+      "detail": "这是同一事务在两种隔离级别下看到不同结果的根本原因。",
+      "source": "MySQL 8.4 Reference Manual – Consistent Nonlocking Reads（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f06",
+      "claim": "SELECT ... FOR UPDATE / LOCK IN SHARE MODE 属于锁定读，会读取最新版本并加锁（待人工复核）",
+      "detail": "锁定读绕过普通 MVCC 快照，读取当前最新已提交版本，并阻止其他事务的冲突修改。",
+      "source": "MySQL 8.4 Reference Manual – InnoDB Transaction Model（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f07",
+      "claim": "二级索引记录不保存 DB_TRX_ID/DB_ROLL_PTR，更新时采用删除标记 + 插入新记录的方式（待人工复核）",
+      "detail": "如需读取历史版本，InnoDB 会通过二级索引页上的主键回表查询聚簇索引。",
+      "source": "MySQL 8.4 Reference Manual – InnoDB Multi-Versioning（Web 搜索摘要）",
+      "confidence": 0.9
+    },
+    {
+      "id": "f08",
+      "claim": "undo log 存储旧版本数据，purge 线程清理不再被任何事务需要的版本（待人工复核）",
+      "detail": "长事务会阻止 purge，导致 undo log 膨胀和表空间膨胀，是高并发场景的常见坑点。",
+      "source": "MySQL 8.4 Reference Manual – InnoDB Multi-Versioning（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f09",
+      "claim": "覆盖索引可直接从二级索引返回查询结果，避免回表（待人工复核）",
+      "detail": "EXPLAIN 中 Extra 出现 Using index 即表示使用了覆盖索引；对高频查询可显著减少 I/O。",
+      "source": "MySQL 官方优化文档（Web 搜索摘要）",
+      "confidence": 0.95
+    }
+  ]
+}

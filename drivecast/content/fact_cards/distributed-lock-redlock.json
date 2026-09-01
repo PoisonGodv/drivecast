@@ -1,0 +1,71 @@
+{
+  "slug": "distributed-lock-redlock",
+  "title": "分布式锁与 Redlock",
+  "direction": "backend_arch",
+  "version": 1,
+  "facts": [
+    {
+      "id": "f01",
+      "claim": "SET key random_value NX PX ttl 可原子地获取带过期时间的分布式锁（待人工复核）",
+      "detail": "NX 保证 key 不存在时才设置；PX 设置毫秒级 TTL，防止死锁。",
+      "source": "redis.io Distributed Locks 文档（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f02",
+      "claim": "释放锁时必须使用 Lua 脚本比较 value 一致后再 DEL，避免误删他人锁（待人工复核）",
+      "detail": "若先 GET 再 DEL 不是原子操作，可能出现判断属于自己后锁被他人获取并误删。",
+      "source": "redis.io Distributed Locks 文档（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f03",
+      "claim": "Redlock 算法通常在 5 个独立 Redis 节点上运行，需要获得多数派 N/2+1 把锁",
+      "detail": "5 节点场景下需获得至少 3 个节点的锁；可容忍最多 2 个节点不可用。",
+      "source": "antirez – Redis distributed locks / Redlock specification（Web 搜索摘要）",
+      "confidence": 1.0
+    },
+    {
+      "id": "f04",
+      "claim": "锁的真实有效时间 = TTL - 获取锁消耗的时间 - 时钟漂移余量",
+      "detail": "计算时使用客户端本地时间差，并扣除一个漂移因子（常见 1%）以抵消节点间时钟偏差。",
+      "source": "antirez – Redis distributed locks / Redlock specification（Web 搜索摘要）",
+      "confidence": 1.0
+    },
+    {
+      "id": "f05",
+      "claim": "Redlock 的安全性依赖时钟有界漂移；GC 停顿、虚拟机迁移、NTP 跳变都可能破坏正确性（待人工复核）",
+      "detail": "客户端持有锁期间如果发生长时间停顿，锁可能已过期而自己仍认为有效。",
+      "source": "Martin Kleppmann – How to do distributed locking / Redlock critique（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f06",
+      "claim": "Redlock 不提供 fencing token，不适用于对正确性要求极高的临界区（待人工复核）",
+      "detail": "Martin Kleppmann 建议使用 ZooKeeper、etcd 等基于共识协议的锁服务，以获取单调递增的 fencing token。",
+      "source": "Martin Kleppmann – How to do distributed locking / Redlock critique（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f07",
+      "claim": "无论是否在某节点上获得锁，释放时都应向所有 N 个节点发送解锁脚本（待人工复核）",
+      "detail": "这样可以清理可能因超时或重试留下的部分状态，避免脏锁残留。",
+      "source": "antirez – Redis distributed locks / Redlock specification（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f08",
+      "claim": "每个客户端/每次加锁应使用全局唯一的随机 token（如密码学安全的 20 字节随机串）",
+      "detail": "token 用于在释放时确认锁的归属；UUID 或 crypto-random 字符串是常见实现。",
+      "source": "antirez – Redis distributed locks / Redlock specification（Web 搜索摘要）",
+      "confidence": 1.0
+    },
+    {
+      "id": "f09",
+      "claim": "Redlock 在 liveness 上可容忍 floor((N-1)/2) 个节点故障（待人工复核）",
+      "detail": "只要多数派存活，系统仍允许加锁和解锁； minority 分区中的节点不会导致脑裂加锁成功。",
+      "source": "antirez – Redis distributed locks / Redlock specification（Web 搜索摘要）",
+      "confidence": 0.95
+    }
+  ]
+}

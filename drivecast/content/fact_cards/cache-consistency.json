@@ -1,0 +1,71 @@
+{
+  "slug": "cache-consistency",
+  "title": "缓存一致性设计模式",
+  "direction": "backend_arch",
+  "version": 1,
+  "facts": [
+    {
+      "id": "f01",
+      "claim": "Cache-aside 模式下应用先读缓存，未命中则从 DB 加载并回填；写操作先更新 DB 再失效缓存（待人工复核）",
+      "detail": "数据库是权威源；缓存只是加速器。失效而非更新缓存，可避免并发写导致缓存与 DB 不一致。",
+      "source": "Microsoft Azure Architecture Center – Cache-Aside Pattern（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f02",
+      "claim": "Read-through 把缓存加载逻辑下沉到缓存组件，应用只与缓存交互（待人工复核）",
+      "detail": "适合读多写少且希望简化应用代码的场景；首次访问的延迟由缓存框架处理。",
+      "source": "Microsoft Azure Architecture Center – Caching Guidance（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f03",
+      "claim": "Write-through 要求缓存与 DB 同步写入，两者都成功才返回客户端（待人工复核）",
+      "detail": "缓存始终保持最新，适合读后写必须立即可见的场景；缺点是写延迟增加。",
+      "source": "Microsoft Azure Architecture Center – Caching Guidance（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f04",
+      "claim": "Write-behind 先写缓存并立即返回，缓存异步批量回写 DB（待人工复核）",
+      "detail": "吞吐高、写延迟低，但存在数据丢失窗口；需要持久化缓冲、重放与幂等设计。",
+      "source": "Microsoft Azure Architecture Center / Azure SQL 博客（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f05",
+      "claim": "Cache-aside 的失效操作可能失败，导致缓存与 DB 短暂不一致；TTL 是兜底的最终一致手段（待人工复核）",
+      "detail": "生产环境应监控缓存命中率与过期时间，并对失效失败进行重试或告警。",
+      "source": "Microsoft Azure Architecture Center – Caching Guidance（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f06",
+      "claim": "延迟双删可降低并发读导致旧值回填的概率：先删缓存，再写 DB，延迟后再删一次缓存（待人工复核）",
+      "detail": "延迟时间应略大于主从复制或业务读耗时；不能 100% 消除竞态，只是降低。",
+      "source": "缓存一致性设计文章 / 面经总结（Web 搜索摘要）",
+      "confidence": 0.9
+    },
+    {
+      "id": "f07",
+      "claim": "CDC / binlog 监听（Debezium、Canal）可以把缓存失效与业务写操作解耦（待人工复核）",
+      "detail": "通过消费数据库变更日志异步失效或更新缓存，天然支持重试、顺序控制和幂等。",
+      "source": "Microsoft Azure / Redis 数据集成文档（Web 搜索摘要）",
+      "confidence": 0.9
+    },
+    {
+      "id": "f08",
+      "claim": "带版本号或 CAS 的并发写可以避免旧值覆盖新值（待人工复核）",
+      "detail": "在缓存和 DB 同时维护版本或 etag，写入时校验版本，失败则重读最新值再试。",
+      "source": "缓存设计模式 / 分布式系统文献（Web 搜索摘要）",
+      "confidence": 0.9
+    },
+    {
+      "id": "f09",
+      "claim": "缓存与 DB 之间的强一致性通常需要分布式事务，多数系统选择有界最终一致性（待人工复核）",
+      "detail": "根据业务容忍度选择模式：Cache-aside+TTL 是默认，严格一致用 Write-through 或版本控制。",
+      "source": "Microsoft Azure Architecture Center – Caching Guidance（Web 搜索摘要）",
+      "confidence": 0.95
+    }
+  ]
+}

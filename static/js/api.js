@@ -64,6 +64,13 @@ export const api = {
   generateEpisode: (id) =>
     request(`/api/episodes/${id}/generate`, { method: 'POST' }),
 
+  // 勘误重生成(docs/07 §5):备份旧产物后重新入队
+  regenerateEpisode: (id, reason = '') =>
+    request(`/api/episodes/${id}/regenerate`, {
+      method: 'POST',
+      body: { reason },
+    }),
+
   // 脚本 / 音频 / 进度
   getScript: (id) => request(`/api/episodes/${id}/script`),
 

@@ -1,0 +1,71 @@
+{
+  "slug": "redis-persistence",
+  "title": "Redis 持久化：RDB 与 AOF",
+  "direction": "backend_arch",
+  "version": 1,
+  "facts": [
+    {
+      "id": "f01",
+      "claim": "RDB 通过 BGSAVE fork 子进程生成某一时刻的数据快照（待人工复核）",
+      "detail": "子进程写快照时父进程继续服务；Linux 下利用 copy-on-write 避免全量内存复制，写时只复制被修改的页。",
+      "source": "redis.io Redis Persistence 文档（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f02",
+      "claim": "默认 RDB 触发条件为 900 秒内 1 次修改、300 秒内 10 次修改、60 秒内 10000 次修改（待人工复核）",
+      "detail": "对应 redis.conf 中的 save 900 1 / save 300 10 / save 60 10000；满足任一条件即执行 BGSAVE。",
+      "source": "redis.conf 默认值（Web 搜索未找到官方 redis.conf 原文）",
+      "confidence": 0.9
+    },
+    {
+      "id": "f03",
+      "claim": "AOF 以追加方式记录每个写命令，默认 appendfsync 为 everysec（待人工复核）",
+      "detail": "everysec 每秒 fsync 一次，折中性能与持久化；可选 always（每条命令 fsync）和 no（由操作系统决定）。",
+      "source": "redis.io Redis Persistence AOF 章节（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f04",
+      "claim": "AOF 重写通过 BGREWRITEAOF fork 子进程生成最小命令集（待人工复核）",
+      "detail": "子进程根据当前内存数据重新生成 AOF 文件；重写期间新命令先写入内存缓冲区，完成后追加到新文件，最后原子替换。",
+      "source": "redis.io Redis Persistence AOF 章节（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f05",
+      "claim": "Redis 4.0 起支持 RDB 与 AOF 的混合持久化（AOF 文件开头为 RDB 前缀）（待人工复核）",
+      "detail": "混合模式下重启时先加载 RDB 前缀快速恢复，再回放后续 AOF 命令，兼顾恢复速度与数据完整。",
+      "source": "redis.io Redis Persistence 文档（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f06",
+      "claim": "同时启用 RDB 与 AOF 时，Redis 重启优先使用 AOF 恢复（待人工复核）",
+      "detail": "AOF 通常包含更完整的写入记录，因此只要 AOF 功能开启，启动流程会以 AOF 为准。",
+      "source": "redis.io Redis Persistence 文档（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f07",
+      "claim": "RDB 恢复速度快、文件紧凑，但可能丢失最后一次快照后的数据（待人工复核）",
+      "detail": "快照间隔内的写操作若宕机未落盘会丢失；AOF 粒度更细，可配置为秒级或命令级丢失。",
+      "source": "redis.io Redis Persistence 文档（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f08",
+      "claim": "appendfsync always 在崩溃时最多丢失一条命令，但吞吐最低（待人工复核）",
+      "detail": "everysec 最多丢失约 1 秒数据；no 的性能最高，但丢失量取决于操作系统刷盘时机。",
+      "source": "redis.io Redis Persistence AOF 章节（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f09",
+      "claim": "AOF 重写失败不会破坏旧 AOF 文件（待人工复核）",
+      "detail": "重写过程中旧的 AOF 仍然可用；只有重写成功并原子替换后，才会切换到新文件。",
+      "source": "redis.io Redis Persistence AOF 章节（Web 搜索摘要）",
+      "confidence": 0.9
+    }
+  ]
+}

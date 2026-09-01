@@ -98,6 +98,9 @@ async def list_plans() -> list[dict]:
 
 async def get_plan(plan_id: int) -> dict | None:
     """计划详情,含 episodes + 各集 status/duration/position/listen_status(docs/02 §4 示例)。"""
+    from ..library import artifacts
+    from ..scriptwriter import service as scriptwriter
+
     async with session() as s:
         p = await s.scalar(select(Plan).where(Plan.id == plan_id))
         if p is None:
@@ -112,6 +115,8 @@ async def get_plan(plan_id: int) -> dict | None:
         for ep, audio in result:
             path = Path(audio.file_path) if audio else None
             has_audio = bool(audio and path and path.exists() and path.stat().st_size > 0)
+            # 审稿/人审徽章数据走文件态(docs/07 §3.1/§4),读不到不影响详情
+            review = (scriptwriter.load_script(ep.ext_id) or {}).get("review") or {}
             episodes.append({
                 "id": ep.id,
                 "ext_id": ep.ext_id,
@@ -122,6 +127,11 @@ async def get_plan(plan_id: int) -> dict | None:
                 "duration_sec": audio.duration_sec if audio else 0,
                 "position_sec": ep.position_sec,
                 "listen_status": ep.listen_status,
+                "review_soft_flags": sum(
+                    1 for f in review.get("flags", []) if f.get("type") == "soft"
+                ),
+                "review_pending_error": bool(review.get("pending_error")),
+                "human_qc_passed": (artifacts.load_human_qc(ep.ext_id) or {}).get("status") == "passed",
             })
         ready_count = sum(1 for e in episodes if e["status"] == "ready")
         return {

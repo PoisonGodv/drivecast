@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     llm_model: str = ""
     llm_timeout: int = 180          # 长脚本输出给足时间
     llm_max_retries: int = 3
+    reviewer_enabled: bool = True   # 脚本事实审稿(docs/07 §3.1);REVIEWER_ENABLED=false 可关省一次 LLM 调用
 
     # ---- TTS(docs/03 §3)----
     tts_voice_expert: str = "zh-CN-YunxiNeural"   # 主讲(男,沉稳)

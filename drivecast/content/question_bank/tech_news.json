@@ -1,0 +1,158 @@
+{
+  "direction": "tech_news",
+  "version": 1,
+  "updated_at": "2026-09-01",
+  "questions": [
+    {
+      "id": "tn-0001",
+      "question": "如果面试官问你最近关注的 LLM 新发布,你会怎么组织回答?",
+      "topic": [
+        "观点话术"
+      ],
+      "frequency": "high",
+      "source": "drivecast 方向设计",
+      "notes": "事实→影响→判断→待观察"
+    },
+    {
+      "id": "tn-0002",
+      "question": "某大厂发布新模型号称刷新 benchmark,面试中你会质疑哪些点?",
+      "topic": [
+        "评估"
+      ],
+      "frequency": "high",
+      "source": "drivecast 方向设计",
+      "notes": "测试集污染/评测维度/落地成本"
+    },
+    {
+      "id": "tn-0003",
+      "question": "MCP/Agent 协议最近很火,它对你现有系统可能带来什么变化?",
+      "topic": [
+        "agent",
+        "mcp"
+      ],
+      "frequency": "high",
+      "source": "2026大模型面试题库",
+      "notes": "工具生态标准化;待人工复核"
+    },
+    {
+      "id": "tn-0004",
+      "question": "边缘设备推理优化新方案频出,你会从哪些指标判断值不值得跟进?",
+      "topic": [
+        "推理优化"
+      ],
+      "frequency": "mid",
+      "source": "drivecast 方向设计",
+      "notes": "延迟/功耗/精度/部署成本"
+    },
+    {
+      "id": "tn-0005",
+      "question": "开源模型能力逼近闭源模型,对工程落地策略有什么影响?",
+      "topic": [
+        "开源"
+      ],
+      "frequency": "mid",
+      "source": "drivecast 方向设计",
+      "notes": "成本/可控性/合规"
+    },
+    {
+      "id": "tn-0006",
+      "question": "多模态模型发布频繁,后端工程侧需要关注哪些新挑战?",
+      "topic": [
+        "多模态"
+      ],
+      "frequency": "mid",
+      "source": "drivecast 方向设计",
+      "notes": "存储/预处理/延迟/成本"
+    },
+    {
+      "id": "tn-0007",
+      "question": "某云服务推出新的 Serverless GPU 推理产品,你会怎么评估是否接入?",
+      "topic": [
+        "infra"
+      ],
+      "frequency": "mid",
+      "source": "drivecast 方向设计",
+      "notes": "冷启动/成本/可迁移性"
+    },
+    {
+      "id": "tn-0008",
+      "question": "AI 编程工具演进很快,这对团队代码审查和知识传承有什么影响?",
+      "topic": [
+        "ai编程"
+      ],
+      "frequency": "mid",
+      "source": "drivecast 方向设计",
+      "notes": "待人工复核"
+    },
+    {
+      "id": "tn-0009",
+      "question": "RAG/Agent 框架一周一个新版本,工程团队如何避免被牵着走?",
+      "topic": [
+        "工程"
+      ],
+      "frequency": "high",
+      "source": "drivecast 方向设计",
+      "notes": "抽象层/评估驱动"
+    },
+    {
+      "id": "tn-0010",
+      "question": "大模型上下文窗口持续变长,是否意味着 RAG 不再重要?",
+      "topic": [
+        "rag"
+      ],
+      "frequency": "high",
+      "source": "drivecast 方向设计",
+      "notes": "长上下文成本/检索精准性"
+    },
+    {
+      "id": "tn-0011",
+      "question": "新的推理优化论文/产品出现,你怎么向团队判断是否投入复现?",
+      "topic": [
+        "推理优化"
+      ],
+      "frequency": "mid",
+      "source": "drivecast 方向设计",
+      "notes": "硬件适配/收益/维护成本"
+    },
+    {
+      "id": "tn-0012",
+      "question": "AI 应用监管政策变化,面试中被问到你怎么看,怎么答?",
+      "topic": [
+        "合规"
+      ],
+      "frequency": "mid",
+      "source": "drivecast 方向设计",
+      "notes": "数据安全/可解释性/责任边界"
+    },
+    {
+      "id": "tn-0013",
+      "question": "某知名产品上线 AI 功能后口碑下滑,你会怎么分析原因?",
+      "topic": [
+        "产品"
+      ],
+      "frequency": "mid",
+      "source": "drivecast 方向设计",
+      "notes": "幻觉/延迟/成本/用户体验"
+    },
+    {
+      "id": "tn-0014",
+      "question": "向量数据库市场很卷,选型时除了性能还应该看什么?",
+      "topic": [
+        "向量库"
+      ],
+      "frequency": "mid",
+      "source": "drivecast 方向设计",
+      "notes": "生态/运维/云原生/成本"
+    },
+    {
+      "id": "tn-0015",
+      "question": "端侧小模型越来越能打,什么场景应该优先考虑端侧推理?",
+      "topic": [
+        "端侧"
+      ],
+      "frequency": "mid",
+      "source": "drivecast 方向设计",
+      "notes": "隐私/延迟/网络不稳定"
+    }
+  ]
+}

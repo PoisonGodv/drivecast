@@ -1,0 +1,205 @@
+{
+  "direction": "source_dive",
+  "version": 1,
+  "updated_at": "2026-09-01",
+  "questions": [
+    {
+      "id": "sd-0001",
+      "question": "从 Go runtime 源码看,GMP 调度里 P 的本地队列什么情况下会把 goroutine 偷走?",
+      "topic": [
+        "go",
+        "gmp"
+      ],
+      "frequency": "high",
+      "source": "Go 源码 / 牛客2026 Go 面经",
+      "notes": "work-stealing 触发条件"
+    },
+    {
+      "id": "sd-0002",
+      "question": "Go map 源码里,扩容触发条件是什么?增量迁移是怎么实现的?",
+      "topic": [
+        "go",
+        "map"
+      ],
+      "frequency": "high",
+      "source": "Go 源码 / 牛客2026 Go 面经",
+      "notes": "负载因子/溢出桶/hmap.oldbuckets"
+    },
+    {
+      "id": "sd-0003",
+      "question": "Redis 字典的渐进式 rehash 在源码里怎么实现?如何在读写时兼顾?",
+      "topic": [
+        "redis",
+        "源码"
+      ],
+      "frequency": "high",
+      "source": "Redis 源码 / 牛客2026面经",
+      "notes": "dictRehashStep/定时 rehash"
+    },
+    {
+      "id": "sd-0004",
+      "question": "Redis SDS 相比 C 字符串有哪些改进?这些改进对应哪些面试考点?",
+      "topic": [
+        "redis",
+        "源码"
+      ],
+      "frequency": "high",
+      "source": "Redis 源码 / 牛客2026面经",
+      "notes": "O(1) 长度/预分配/二进制安全"
+    },
+    {
+      "id": "sd-0005",
+      "question": "etcd Raft 源码中,leader 怎么处理 read index 请求以保证线性一致?",
+      "topic": [
+        "etcd",
+        "raft"
+      ],
+      "frequency": "high",
+      "source": "etcd 源码 / 牛客2026面经",
+      "notes": "心跳确认 applied index"
+    },
+    {
+      "id": "sd-0006",
+      "question": "Linux epoll 源码里,EPOLLIN/EPOLLOUT 的事件触发机制有什么区别?",
+      "topic": [
+        "linux",
+        "epoll"
+      ],
+      "frequency": "mid",
+      "source": "Linux 源码 / 牛客2026面经",
+      "notes": "LT/ET;就绪链表"
+    },
+    {
+      "id": "sd-0007",
+      "question": "从 Linux TCP 源码看,TIME_WAIT 状态为什么要等 2MSL?",
+      "topic": [
+        "linux",
+        "tcp"
+      ],
+      "frequency": "mid",
+      "source": "Linux 源码 / 牛客2026面经",
+      "notes": "防止旧连接报文干扰新连接"
+    },
+    {
+      "id": "sd-0008",
+      "question": "Go sync.Mutex 源码里,正常模式和饥饿模式怎么切换?",
+      "topic": [
+        "go",
+        "sync"
+      ],
+      "frequency": "high",
+      "source": "Go 源码 / 牛客2026 Go 面经",
+      "notes": "starvationThresholdNs"
+    },
+    {
+      "id": "sd-0009",
+      "question": "MySQL InnoDB 源码中,一条 SELECT 语句从接收到返回经历了哪些主要阶段?",
+      "topic": [
+        "mysql",
+        "源码"
+      ],
+      "frequency": "mid",
+      "source": "MySQL 源码 / 牛客2026面经",
+      "notes": "解析/优化/执行/存储引擎"
+    },
+    {
+      "id": "sd-0010",
+      "question": "Kafka 源码里,producer 发送消息时的 accumulator 和 sender 线程怎么协作?",
+      "topic": [
+        "kafka",
+        "源码"
+      ],
+      "frequency": "mid",
+      "source": "Kafka 源码 / 牛客2026面经",
+      "notes": "RecordAccumulator/NetworkClient"
+    },
+    {
+      "id": "sd-0011",
+      "question": "从 vLLM 源码看,PagedAttention 的 block table 是怎么管理的?",
+      "topic": [
+        "vllm",
+        "源码"
+      ],
+      "frequency": "mid",
+      "source": "vLLM 源码 / 2026大模型面试题库",
+      "notes": "逻辑块到物理块映射"
+    },
+    {
+      "id": "sd-0012",
+      "question": "Transformers 库里 generate 方法的采样流程,greedy 和 sample 分支在哪里?",
+      "topic": [
+        "transformers",
+        "源码"
+      ],
+      "frequency": "mid",
+      "source": "HuggingFace 源码 / 2026大模型面试题库",
+      "notes": "GenerationMixin.sample"
+    },
+    {
+      "id": "sd-0013",
+      "question": "Go channel 源码里,send 和 recv 在什么情况下会挂到等待队列?",
+      "topic": [
+        "go",
+        "channel"
+      ],
+      "frequency": "high",
+      "source": "Go 源码 / 牛客2026 Go 面经",
+      "notes": "hchan.sendq/recvq"
+    },
+    {
+      "id": "sd-0014",
+      "question": "Redis zset 源码中,跳表和压缩列表的切换条件是什么?",
+      "topic": [
+        "redis",
+        "源码"
+      ],
+      "frequency": "mid",
+      "source": "Redis 源码 / 牛客2026面经",
+      "notes": "zset-max-ziplist-entries"
+    },
+    {
+      "id": "sd-0015",
+      "question": "etcd boltdb 里,watch 机制是怎么做到高效通知的?",
+      "topic": [
+        "etcd",
+        "boltdb"
+      ],
+      "frequency": "mid",
+      "source": "etcd 源码 / 牛客2026面经",
+      "notes": "revision 索引/watchableStore"
+    },
+    {
+      "id": "sd-0016",
+      "question": "Linux 内核里,进程调度 CFS 的 vruntime 怎么计算?为什么公平?",
+      "topic": [
+        "linux",
+        "调度"
+      ],
+      "frequency": "low",
+      "source": "Linux 源码 / 牛客2026面经",
+      "notes": "红黑树/权重"
+    },
+    {
+      "id": "sd-0017",
+      "question": "从 LLaMA/Mistral 源码看,RMSNorm 相比 LayerNorm 改了什么?",
+      "topic": [
+        "llm",
+        "源码"
+      ],
+      "frequency": "low",
+      "source": "开源模型源码 / 2026大模型面试题库",
+      "notes": "去均值/保留缩放"
+    },
+    {
+      "id": "sd-0018",
+      "question": "Go GC 源码中,并发标记的写屏障是哪种?什么时候开启和关闭?",
+      "topic": [
+        "go",
+        "gc"
+      ],
+      "frequency": "mid",
+      "source": "Go 源码 / 牛客2026 Go 面经",
+      "notes": "hybrid write barrier"
+    }
+  ]
+}

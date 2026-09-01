@@ -12,9 +12,12 @@ from sqlalchemy import select
 
 from ..db import session
 from ..jobs import pipeline
+from ..library import artifacts
 from ..library import service as library_service
 from ..models import Job, Plan, Script, Topic
+from ..persist import set_episode_status
 from ..planner import service as planner
+from ..scriptwriter import service as scriptwriter
 
 router = APIRouter(prefix="/api", tags=["plans"])
 
@@ -53,6 +56,19 @@ class EpisodeGenerateOut(BaseModel):
     status: str
 
 
+class RegenerateIn(BaseModel):
+    """勘误重生成入参(docs/07 §5);reason 可空,body 整体可省。"""
+
+    reason: str = Field(default="", max_length=500)
+
+
+class QcIn(BaseModel):
+    """人审标记入参(docs/07 §4)。"""
+
+    passed: bool
+    notes: str = Field(default="", max_length=500)
+
+
 class JobOut(BaseModel):
     id: int
     kind: str
@@ -70,6 +86,8 @@ class ScriptOut(BaseModel):
     episode_id: int
     content_md: str
     knowledge: list[str]
+    review: dict | None = None   # 事实审稿结果,文件态透传(docs/07 §3.1);旧脚本无此字段
+    errata: list[dict] = []      # 勘误历史(docs/07 §5)
 
 
 # ---------- topics ----------
@@ -182,18 +200,52 @@ async def get_job(job_id: int) -> dict:
         }
 
 
+@router.post("/episodes/{episode_id}/regenerate", response_model=EpisodeGenerateOut)
+async def regenerate_episode(episode_id: int, body: RegenerateIn | None = None) -> dict:
+    """勘误重生成(docs/07 §5):备份旧产物 → 状态重置 → 复用 script job 队列。"""
+    ep = await library_service.get_episode(episode_id)
+    if ep is None:
+        raise HTTPException(status_code=404, detail={"code": 404, "message": "episode not found"})
+    plan = await library_service.get_plan_by_id(ep.plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
+
+    reason = (body.reason if body else "").strip()
+    if reason:
+        artifacts.append_errata(ep.ext_id, reason)
+    artifacts.backup_artifacts(ep.ext_id)
+    await set_episode_status(ep.ext_id, "pending")
+    job_id = await pipeline.enqueue_episode(plan.ext_id, ep.seq, ep.ext_id)
+    return {"episode_id": episode_id, "job_id": job_id, "status": "pending"}
+
+
+@router.post("/episodes/{episode_id}/qc")
+async def qc_episode(episode_id: int, body: QcIn) -> dict:
+    """人审标记(docs/07 §4):写 meta 的 human_qc;本期只做 API,不做 UI。"""
+    ep = await library_service.get_episode(episode_id)
+    if ep is None:
+        raise HTTPException(status_code=404, detail={"code": 404, "message": "episode not found"})
+    return artifacts.write_human_qc(ep.ext_id, body.passed, body.notes)
+
+
 @router.get("/episodes/{episode_id}/script", response_model=ScriptOut)
 async def get_script(episode_id: int) -> dict:
-    """取脚本文本(页面跟读;docs/02 §4)。"""
+    """取脚本文本(页面跟读;docs/02 §4),附带审稿结果与勘误历史。"""
     async with session() as s:
         script = await s.scalar(select(Script).where(Script.episode_id == episode_id))
         if script is None:
             raise HTTPException(status_code=404, detail={"code": 404, "message": "script not found"})
-        return {
-            "episode_id": episode_id,
-            "content_md": script.content_md,
-            "knowledge": json.loads(script.knowledge) if script.knowledge else [],
-        }
+
+    # review/errata 走文件态(DB 不存审稿结果,docs/07 §3.1)
+    ep = await library_service.get_episode(episode_id)
+    file_script = scriptwriter.load_script(ep.ext_id) if ep else None
+    return {
+        "episode_id": episode_id,
+        "content_md": script.content_md,
+        "knowledge": json.loads(script.knowledge) if script.knowledge else [],
+        "review": file_script.get("review") if file_script else None,
+        "errata": artifacts.load_errata(ep.ext_id) if ep else [],
+    }
 
 
 # ---------- SSE ----------

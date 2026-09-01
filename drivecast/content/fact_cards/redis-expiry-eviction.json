@@ -1,0 +1,71 @@
+{
+  "slug": "redis-expiry-eviction",
+  "title": "Redis 过期与内存淘汰",
+  "direction": "backend_arch",
+  "version": 1,
+  "facts": [
+    {
+      "id": "f01",
+      "claim": "EXPIRE/PEXPIRE 为 key 设置 TTL，Redis 内部保存的是绝对过期时间戳（待人工复核）",
+      "detail": "访问时比较当前时间与过期时间，超时即视为过期；TTL 可通过 TTL/PTTL 查询。",
+      "source": "redis.io 命令文档（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f02",
+      "claim": "过期 key 的清理是被动的访问删除 + 主动的定时采样删除（待人工复核）",
+      "detail": "主动过期任务每秒运行多次，随机抽取一批带 TTL 的 key 检查，避免集中删除导致延迟尖刺。",
+      "source": "redis.io Expire 文档（Web 搜索摘要）",
+      "confidence": 0.9
+    },
+    {
+      "id": "f03",
+      "claim": "maxmemory-policy 默认值为 noeviction，内存达到上限后写命令返回错误（待人工复核）",
+      "detail": "noeviction 不会自动删 key；只读命令仍可执行。",
+      "source": "redis.io 配置文档（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f04",
+      "claim": "allkeys-lru 在所有 key 中按最近最少使用淘汰；volatile-lru 只在带 TTL 的 key 中淘汰（待人工复核）",
+      "detail": "volatile-lru 适合混合负载，保护无 TTL 的持久 key 不被误删。",
+      "source": "redis.io Using Redis as an LRU cache 文档（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f05",
+      "claim": "allkeys-lfu/volatile-lfu 按访问频率而非最近时间淘汰，适合热点明显的场景（待人工复核）",
+      "detail": "LFU 对周期性批量扫描的抗干扰能力优于 LRU；Redis 建议新部署在访问频率倾斜时优先使用 LFU。",
+      "source": "redis.io Using Redis as an LRU cache 文档（Web 搜索摘要）",
+      "confidence": 0.9
+    },
+    {
+      "id": "f06",
+      "claim": "maxmemory-samples 默认值为 5，采样越多 LRU/LFU 越精确但 CPU 越高（待人工复核）",
+      "detail": "Redis 使用近似 LRU/LFU 算法，每次从样本中挑选淘汰候选，而不是维护全局精确排序。",
+      "source": "redis.io 配置文档（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f07",
+      "claim": "使用 volatile-* 策略时，如果数据库里没有带 TTL 的 key，行为等价于 noeviction（待人工复核）",
+      "detail": "此时没有可淘汰对象，写命令在内存达到上限后会失败。",
+      "source": "redis.io Eviction 文档（Web 搜索摘要）",
+      "confidence": 0.9
+    },
+    {
+      "id": "f08",
+      "claim": "淘汰只在设置了 maxmemory 且达到阈值时触发（待人工复核）",
+      "detail": "未设置 maxmemory 时 Redis 对内存使用无上限限制（受系统内存影响）。",
+      "source": "redis.io 配置文档（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f09",
+      "claim": "过期 key 在被主动删除前仍占用内存（待人工复核）",
+      "detail": "内存回收存在滞后，监控时应结合 expired/evicted 指标与内存使用率一起判断。",
+      "source": "redis.io Expire 文档（Web 搜索摘要）",
+      "confidence": 0.9
+    }
+  ]
+}

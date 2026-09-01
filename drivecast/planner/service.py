@@ -8,6 +8,7 @@ import json
 from datetime import datetime
 
 from ..config import ensure_data_dirs, settings
+from ..content.loader import get_question_bank
 from ..llm import prompts
 from ..llm.provider import get_provider
 from ..persist import upsert_plan
@@ -15,6 +16,23 @@ from ..schemas import Direction, EpisodeRec, PlanOut, PlanRec
 
 # 对话式默认方向(docs/01 §3.1:②③以对话为主,①④以独白为主)
 DIALOGUE_DIRECTIONS = {"ai_llm", "tech_news"}
+
+
+def _grounding_prompt(direction: str) -> str:
+    """注入方向高频题 top15,要求大纲按题簇递进组织(docs/07 §2)。"""
+    questions = get_question_bank(direction)
+    high = [q for q in questions if q.get("frequency") == "high"]
+    chosen = high[:15]
+    if len(chosen) < 15:
+        mid = [q for q in questions if q.get("frequency") == "mid"]
+        chosen.extend(mid[: 15 - len(chosen)])
+    if not chosen:
+        return ""
+    lines = ["【方向高频面试题参考】(按出现频率整理,计划大纲应优先覆盖这些题簇)"]
+    for idx, q in enumerate(chosen, 1):
+        lines.append(f"{idx}. {q.get('question', '')}")
+    lines.append(f"(共 {len(chosen)} 题,每集目标应能回应其中若干题的考点;题面可改写,考点必须覆盖)")
+    return "\n".join(lines)
 
 
 def _new_plan_id() -> str:
@@ -47,9 +65,14 @@ async def create_plan(
     count = episode_count or settings.default_episode_count
     minutes = target_minutes or settings.target_minutes
 
+    user = prompts.planner_user(topic, direction, count)
+    grounding = _grounding_prompt(direction)
+    if grounding:
+        user += f"\n\n{grounding}"
+
     result = await get_provider().complete(
         system=prompts.PLANNER_SYSTEM,
-        user=prompts.planner_user(topic, direction, count),
+        user=user,
         schema=PlanOut,
         temperature=0.7,
     )

@@ -1,0 +1,71 @@
+{
+  "slug": "tcp-congestion-retrans",
+  "title": "TCP 拥塞控制与重传",
+  "direction": "backend_arch",
+  "version": 1,
+  "facts": [
+    {
+      "id": "f01",
+      "claim": "RFC 6298 将 TCP 初始 RTO 从 RFC 2988 的 3 秒改为 1 秒",
+      "detail": "在获得任何 RTT 样本之前，Linux 等实现默认使用 1 秒作为首次重传超时。",
+      "source": "RFC 6298 – Computing TCP's Retransmission Timer（Web 搜索摘要）",
+      "confidence": 1.0
+    },
+    {
+      "id": "f02",
+      "claim": "RTO = SRTT + max(G, K × RTTVAR)，其中 K = 4",
+      "detail": "SRTT 是平滑 RTT，RTTVAR 是 RTT 变化量，G 是时钟粒度；该公式综合均值与抖动。",
+      "source": "RFC 6298 – Computing TCP's Retransmission Timer（Web 搜索摘要）",
+      "confidence": 1.0
+    },
+    {
+      "id": "f03",
+      "claim": "SRTT 平滑系数 α = 1/8，RTTVAR 平滑系数 β = 1/4",
+      "detail": "α 控制均值跟踪速度，β 控制方差跟踪速度；更新 RTTVAR 时要用旧的 SRTT 计算偏差。",
+      "source": "RFC 6298 – Computing TCP's Retransmission Timer（Web 搜索摘要）",
+      "confidence": 1.0
+    },
+    {
+      "id": "f04",
+      "claim": "第一次测得 RTT 时，SRTT 设为该样本，RTTVAR 设为该样本的一半",
+      "detail": "后续样本按 Jacobson 算法更新：先更新 RTTVAR，再更新 SRTT，最后重新计算 RTO。",
+      "source": "RFC 6298 – Computing TCP's Retransmission Timer（Web 搜索摘要）",
+      "confidence": 1.0
+    },
+    {
+      "id": "f05",
+      "claim": "RTO 最小值建议为 1 秒，最大值通常实现为 60 秒或更大（待人工复核）",
+      "detail": "RFC 推荐下限 1 秒防止过快重传；Linux tcp_retrans_time 等参数控制上限。",
+      "source": "RFC 6298 / Linux 网络实现文档（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f06",
+      "claim": "发生超时重传后 RTO 会指数退避，成功确认后重置（待人工复核）",
+      "detail": "退避直到上限；收到新 ACK 后按最新 RTT 样本重新计算 RTO，而非继承退避值。",
+      "source": "RFC 6298 / RFC 5681 – TCP Congestion Control（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f07",
+      "claim": "RFC 5681 定义了慢启动、拥塞避免、快速重传与快速恢复四个阶段（待人工复核）",
+      "detail": "拥塞窗口 cwnd 和慢启动阈值 ssthresh 共同控制发送速率；丢包是拥塞信号。",
+      "source": "RFC 5681 – TCP Congestion Control（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f08",
+      "claim": "快速重传在连续收到 3 个重复 ACK 时触发，ssthresh 设为当前 cwnd 的一半（待人工复核）",
+      "detail": "进入快速恢复后 cwnd 通常设为 ssthresh + 3×MSS，收到新 ACK 后再调整为 ssthresh。",
+      "source": "RFC 5681 – TCP Congestion Control（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f09",
+      "claim": "Linux 默认拥塞控制算法为 CUBIC（内核 2.6.19 起），BBR 是基于模型的较新算法（待人工复核）",
+      "detail": "CUBIC 以丢包为信号；BBR 通过带宽和 RTT 估计主动调节，减少 bufferbloat。",
+      "source": "Linux kernel documentation / Google BBR paper（Web 搜索摘要）",
+      "confidence": 0.9
+    }
+  ]
+}

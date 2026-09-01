@@ -1,0 +1,71 @@
+{
+  "slug": "kafka-order-idempotent",
+  "title": "Kafka 顺序性与幂等生产者",
+  "direction": "backend_arch",
+  "version": 1,
+  "facts": [
+    {
+      "id": "f01",
+      "claim": "Kafka 3.0 起 enable.idempotence 默认值变为 true",
+      "detail": "KIP-679 将幂等性设为默认开启，单分区单会话内的重试不会导致重复写入。",
+      "source": "Apache Kafka KIP-679 / kafka.apache.org documentation（Web 搜索摘要）",
+      "confidence": 1.0
+    },
+    {
+      "id": "f02",
+      "claim": "幂等生产者通过 Producer ID（PID）和每个分区的单调序列号实现去重",
+      "detail": "Broker 为每个 <PID, partition> 维护已接收的最大序列号，拒绝小于等于该序列号的消息。",
+      "source": "Apache Kafka Documentation – Delivery Semantics（Web 搜索摘要）",
+      "confidence": 1.0
+    },
+    {
+      "id": "f03",
+      "claim": "幂等生产者在单个生产者会话内保证单分区 exactly-once 且有序",
+      "detail": "重试不会破坏顺序和唯一性；该保证不跨分区、不跨会话。",
+      "source": "Apache Kafka Documentation – Delivery Semantics（Web 搜索摘要）",
+      "confidence": 1.0
+    },
+    {
+      "id": "f04",
+      "claim": "启用幂等性后 Kafka 会强制 acks=all，并允许 max.in.flight.requests.per.connection 最大为 5 同时保持顺序",
+      "detail": "若关闭幂等性，max.in.flight > 1 时重试可能导致消息乱序。",
+      "source": "Apache Kafka Documentation – Delivery Semantics（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f05",
+      "claim": "跨分区的 exactly-once 需要 transactions 与 transactional.id",
+      "detail": "通过 initTransactions、beginTransaction、sendOffsetsToTransaction、commitTransaction 实现 consume-transform-produce 的原子性。",
+      "source": "Apache Kafka Documentation – Transactions（Web 搜索摘要）",
+      "confidence": 1.0
+    },
+    {
+      "id": "f06",
+      "claim": "消费者参与 EOS 需要设置 isolation.level=read_committed 并关闭自动提交",
+      "detail": "read_committed 会过滤掉未提交事务的消息和 aborted 记录；关闭自动提交以便与事务边界对齐。",
+      "source": "Apache Kafka Documentation – Transactions（Web 搜索摘要）",
+      "confidence": 1.0
+    },
+    {
+      "id": "f07",
+      "claim": "幂等性只在同一个 PID/会话内生效，生产者重启会获得新 PID（待人工复核）",
+      "detail": "若要跨重启保持 EOS 并防止旧实例继续写入，必须使用 transactional.id 进行 fencing。",
+      "source": "Apache Kafka Documentation – Transactions（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f08",
+      "claim": "max.in.flight.requests.per.connection 超过 5 会破坏幂等生产者的顺序保证（待人工复核）",
+      "detail": "Kafka 2.5+ 的幂等实现允许最多 5 个未确认请求并保持顺序；更高值会报错或退化。",
+      "source": "Apache Kafka Documentation / KIP-98（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f09",
+      "claim": "相同 transactional.id 重启时会通过 epoch 递增将旧生产者实例 fence 掉（待人工复核）",
+      "detail": "Transaction Coordinator 记录该 transactional.id 的最新 epoch，旧 epoch 的写请求会被拒绝。",
+      "source": "Apache Kafka KIP-98 / Transactions 设计文档（Web 搜索摘要）",
+      "confidence": 0.95
+    }
+  ]
+}

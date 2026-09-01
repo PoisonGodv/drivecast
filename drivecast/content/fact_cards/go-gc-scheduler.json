@@ -1,0 +1,71 @@
+{
+  "slug": "go-gc-scheduler",
+  "title": "Go GMP 调度与 GC",
+  "direction": "backend_arch",
+  "version": 1,
+  "facts": [
+    {
+      "id": "f01",
+      "claim": "Go 调度器采用 G-M-P 模型：G 是 goroutine，M 是 OS 线程，P 是逻辑处理器（待人工复核）",
+      "detail": "调度器把可运行的 G 分配到持有 P 的 M 上执行；P 持有本地运行队列和调度状态。",
+      "source": "Go runtime HACKING 文档 / Go runtime 源码（Web 搜索摘要，官方页面未直接获取）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f02",
+      "claim": "GOMAXPROCS 决定 P 的数量，默认值等于 CPU 逻辑核心数 runtime.NumCPU（待人工复核）",
+      "detail": "同时处于运行态的 goroutine 数量不会超过 GOMAXPROCS，阻塞或系统调用会让出 M。",
+      "source": "Go 官方文档 / runtime 包说明（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f03",
+      "claim": "每个 P 拥有 256 个槽位的本地运行队列，外加一个 runnext 单槽优先级位（待人工复核）",
+      "detail": "本地队列无锁访问，减少全局锁竞争；runnext 用于快速调度刚刚唤醒的 goroutine。",
+      "source": "Go runtime 源码分析 / 社区深度文章（Web 搜索摘要）",
+      "confidence": 0.9
+    },
+    {
+      "id": "f04",
+      "claim": "全局运行队列是带锁的链表，作为本地队列溢出或窃取失败后的兜底（待人工复核）",
+      "detail": "当 P 的本地队列满时，会把一半 goroutine 移到全局队列；空 P 会按公式批量取回。",
+      "source": "Go runtime 源码分析 / 社区深度文章（Web 搜索摘要）",
+      "confidence": 0.9
+    },
+    {
+      "id": "f05",
+      "claim": "工作窃取机制让空闲 P 从其他 P 的本地队列偷取 goroutine，提高 CPU 利用率（待人工复核）",
+      "detail": "先从全局队列取，再尝试从其他 P 的本地队列窃取一半任务，最后检查网络轮询器。",
+      "source": "Go runtime HACKING 文档 / 社区深度文章（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f06",
+      "claim": "网络轮询器集成 epoll/kqueue，I/O 阻塞的 goroutine 不占用运行中的 M（待人工复核）",
+      "detail": "当 goroutine 在 netpoll 上等待时，对应 G 会被挂起，底层 M 可被复用执行其他 G。",
+      "source": "Go runtime 源码分析 / 社区深度文章（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f07",
+      "claim": "sysmon 是独立后台 M，负责监控长时间运行的 goroutine、强制抢占、网络轮询和触发 GC（待人工复核）",
+      "detail": "sysmon 不绑定 P，可检测运行超过 10ms 的 goroutine 并发出抢占信号。",
+      "source": "Go runtime 源码分析 / 社区深度文章（Web 搜索摘要）",
+      "confidence": 0.9
+    },
+    {
+      "id": "f08",
+      "claim": "Go 1.14 引入基于 SIGURG 的异步抢占，解决无函数调用 tight loop 无法让出 CPU 的问题（待人工复核）",
+      "detail": "在此之前调度是协作式的，只有函数调用、channel 操作或系统调用等检查点才能让出。",
+      "source": "Go 1.14 Release Notes（Web 搜索摘要）",
+      "confidence": 0.95
+    },
+    {
+      "id": "f09",
+      "claim": "Go GC 采用并发三色标记清扫算法，目标是通过 GOGC 控制堆内存触发阈值（待人工复核）",
+      "detail": "默认 GOGC=100 表示当存活堆大小翻倍时触发下一轮 GC；Pacer 负责平衡标记进度与分配速率。",
+      "source": "Go GC 设计文档 / Go 官方博客（Web 搜索摘要）",
+      "confidence": 0.9
+    }
+  ]
+}

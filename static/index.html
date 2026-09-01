@@ -159,6 +159,17 @@
                   </span>
                   <span v-if="ep.duration_sec" class="text-muted">{{ formatTime(ep.duration_sec) }}</span>
                   <span v-if="ep.percent != null" class="text-muted">{{ ep.percent }}%</span>
+                  <span
+                    v-if="ep.review_soft_flags"
+                    class="text-muted"
+                    :title="'审稿软标记 ' + ep.review_soft_flags + ' 处,详见文稿'"
+                  >⚠️{{ ep.review_soft_flags }}</span>
+                  <span
+                    v-if="ep.review_pending_error"
+                    class="text-muted"
+                    title="审稿未完成(fail-open 放行),建议手动复核"
+                  >⚠️未审</span>
+                  <span v-if="ep.human_qc_passed" class="text-muted" title="已通过人工真听质检(docs/08)">✓已人审</span>
                 </div>
               </div>
               <div class="episode-actions">
@@ -174,6 +185,13 @@
                   class="btn btn-danger"
                   aria-label="重试"
                 >↻</button>
+                <button
+                  v-if="ep.status === 'ready'"
+                  @click="regenerateEpisode(ep.id)"
+                  class="btn"
+                  aria-label="重新生成(勘误)"
+                  title="重新生成(勘误,旧产物自动备份)"
+                >⟳</button>
               </div>
             </div>
           </div>

@@ -253,6 +253,17 @@ const appState = reactive({
     }
   },
 
+  /* 勘误重生成(docs/07 §5):旧产物自动备份,确认时填写原因入勘误史 */
+  async regenerateEpisode(id) {
+    const reason = window.prompt('重新生成本集,原因(记入勘误历史,可留空):') ?? ''
+    try {
+      await api.regenerateEpisode(id, reason.trim())
+      this.showToast('已备份旧产物并重新入队')
+    } catch (err) {
+      this.showToast(err.message)
+    }
+  },
+
   playFromPlan(epId) {
     if (!this.plan) return
     loadEpisode(epId, this.plan)

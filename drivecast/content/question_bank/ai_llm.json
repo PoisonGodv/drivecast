@@ -1,0 +1,535 @@
+{
+  "direction": "ai_llm",
+  "version": 1,
+  "updated_at": "2026-09-01",
+  "questions": [
+    {
+      "id": "ai-0001",
+      "question": "RAG 检索效果不好,应该从哪几个环节系统排查?",
+      "topic": [
+        "rag",
+        "检索"
+      ],
+      "frequency": "high",
+      "source": "老刘说 NLP RAG 常见面试题 / 2026大模型面试题库",
+      "notes": "query/切块/embedding/召回/rerank"
+    },
+    {
+      "id": "ai-0002",
+      "question": "RAG 中 chunk 怎么切?按固定 token、语义、结构切各有什么取舍?",
+      "topic": [
+        "rag",
+        "切块"
+      ],
+      "frequency": "high",
+      "source": "GitHub LLMs_interview_notes / 2026大模型面试题库",
+      "notes": "上下文完整性与召回粒度权衡"
+    },
+    {
+      "id": "ai-0003",
+      "question": "Embedding 模型选型要考虑哪些因素?相同领域与跨领域怎么选?",
+      "topic": [
+        "rag",
+        "embedding"
+      ],
+      "frequency": "high",
+      "source": "2026大模型面试题库",
+      "notes": "MTEB/领域微调/多语言"
+    },
+    {
+      "id": "ai-0004",
+      "question": "RAG 里的幻觉问题有哪些类型?检索增强本身能解决所有幻觉吗?",
+      "topic": [
+        "rag",
+        "幻觉"
+      ],
+      "frequency": "high",
+      "source": "老刘说 NLP / 2026大模型面试题库",
+      "notes": "事实性/忠实性/生成式幻觉"
+    },
+    {
+      "id": "ai-0005",
+      "question": "Rerank 模型要不要上?什么情况下收益明显下降?",
+      "topic": [
+        "rag",
+        "rerank"
+      ],
+      "frequency": "high",
+      "source": "2026大模型面试题库",
+      "notes": "延迟成本 vs 召回质量"
+    },
+    {
+      "id": "ai-0006",
+      "question": "Agent 里 ReAct 和 Function Calling 的核心区别是什么?各自适合什么任务?",
+      "topic": [
+        "agent",
+        "react"
+      ],
+      "frequency": "high",
+      "source": "代码随想录 2026大模型面经 / 2026大模型面试题库",
+      "notes": "推理+行动 vs 结构化工具调用"
+    },
+    {
+      "id": "ai-0007",
+      "question": "LLM Agent 的 Memory 怎么设计?短期记忆与长期记忆分别怎么存?",
+      "topic": [
+        "agent",
+        "memory"
+      ],
+      "frequency": "high",
+      "source": "GitHub LLMs_interview_notes / 2026大模型面试题库",
+      "notes": "buffer/summary/vector store"
+    },
+    {
+      "id": "ai-0008",
+      "question": "多 Agent 系统里,Agent 之间怎么协作?主从和去中心化各有什么坑?",
+      "topic": [
+        "agent",
+        "多智能体"
+      ],
+      "frequency": "high",
+      "source": "2026大模型面试题库",
+      "notes": "路由、状态同步、循环调用"
+    },
+    {
+      "id": "ai-0009",
+      "question": "工具调用失败时 Agent 怎么兜底?重试、降级、人工审核如何设计?",
+      "topic": [
+        "agent",
+        "可靠性"
+      ],
+      "frequency": "high",
+      "source": "2026大模型面试题库",
+      "notes": "工具 schema 校验/超时/错误分类"
+    },
+    {
+      "id": "ai-0010",
+      "question": "SFT 和 RLHF/DPO 分别解决什么问题?什么时候该用哪个?",
+      "topic": [
+        "微调",
+        "对齐"
+      ],
+      "frequency": "high",
+      "source": "GitHub LLMs_interview_notes / 2026大模型面试题库",
+      "notes": "能力学习 vs 偏好对齐"
+    },
+    {
+      "id": "ai-0011",
+      "question": "LoRA 为什么能减少显存占用?rank 大小怎么选?",
+      "topic": [
+        "微调",
+        "lora"
+      ],
+      "frequency": "high",
+      "source": "2026大模型面试题库",
+      "notes": "低秩分解;rank 越大表达能力越强但显存越大"
+    },
+    {
+      "id": "ai-0012",
+      "question": "QLoRA 的 4-bit NormalFloat 和双量化分别省了什么?",
+      "topic": [
+        "微调",
+        "qlora"
+      ],
+      "frequency": "high",
+      "source": "GitHub LLMs_interview_notes",
+      "notes": "量化常数+分页优化器"
+    },
+    {
+      "id": "ai-0013",
+      "question": "KV Cache 为什么能加速自回归生成?它带来的显存瓶颈是什么?",
+      "topic": [
+        "推理优化",
+        "kv cache"
+      ],
+      "frequency": "high",
+      "source": "极市社区 LLM推理优化高频面试题 / 阿里 LLM推理优化面经",
+      "notes": "避免重复计算历史 key/value;长序列显存 O(n)"
+    },
+    {
+      "id": "ai-0014",
+      "question": "FlashAttention 的核心思路是什么?为什么它既省显存又不怎么慢?",
+      "topic": [
+        "推理优化",
+        "flashattention"
+      ],
+      "frequency": "high",
+      "source": "极市社区 LLM推理优化高频面试题",
+      "notes": "分块计算+重计算;IO 感知"
+    },
+    {
+      "id": "ai-0015",
+      "question": "Continuous Batching 和 Static Batching 的吞吐差异在哪里?",
+      "topic": [
+        "推理优化",
+        "批处理"
+      ],
+      "frequency": "high",
+      "source": "阿里 LLM推理优化面经 / 2026大模型面试题库",
+      "notes": "请求长度不齐时 GPU 利用率"
+    },
+    {
+      "id": "ai-0016",
+      "question": "vLLM 的 PagedAttention 借鉴了什么思想?它解决了什么问题?",
+      "topic": [
+        "推理优化",
+        "vllm"
+      ],
+      "frequency": "high",
+      "source": "2026大模型面试题库",
+      "notes": "操作系统分页;KV Cache 碎片/浪费"
+    },
+    {
+      "id": "ai-0017",
+      "question": "模型量化 INT8/INT4 各有哪些方案?精度损失主要出现在哪里?",
+      "topic": [
+        "推理优化",
+        "量化"
+      ],
+      "frequency": "high",
+      "source": "极市社区 LLM推理优化高频面试题",
+      "notes": "GPTQ/AWQ/SmoothQuant;outlier 激活值"
+    },
+    {
+      "id": "ai-0018",
+      "question": "Speculative Decoding 为什么能加速?draft model 怎么选?",
+      "topic": [
+        "推理优化",
+        "投机采样"
+      ],
+      "frequency": "high",
+      "source": "阿里 LLM推理优化面经",
+      "notes": "小模型生成候选+大模型并行验证"
+    },
+    {
+      "id": "ai-0019",
+      "question": "Transformer 的 Self-Attention 复杂度是多少?长文本场景有哪些优化方向?",
+      "topic": [
+        "基础",
+        "transformer"
+      ],
+      "frequency": "high",
+      "source": "代码随想录 2026大模型面经",
+      "notes": "O(n^2);稀疏注意力/线性注意力/RoPE 外推"
+    },
+    {
+      "id": "ai-0020",
+      "question": "RAG 评估要关注哪些指标?召回率、忠实度、答案相关性怎么权衡?",
+      "topic": [
+        "rag",
+        "评估"
+      ],
+      "frequency": "high",
+      "source": "老刘说 NLP / 2026大模型面试题库",
+      "notes": "retrieval/generation/end-to-end 分层评估"
+    },
+    {
+      "id": "ai-0021",
+      "question": "GraphRAG 和普通 RAG 的区别是什么?适合什么类型数据?",
+      "topic": [
+        "rag",
+        "graphrag"
+      ],
+      "frequency": "mid",
+      "source": "2026大模型面试题库",
+      "notes": "实体关系图+社区摘要;结构化知识"
+    },
+    {
+      "id": "ai-0022",
+      "question": "Self-RAG 和 Corrective RAG 的思路分别是什么?",
+      "topic": [
+        "rag",
+        "self-rag"
+      ],
+      "frequency": "mid",
+      "source": "2026大模型面试题库",
+      "notes": "生成反思 token/检索结果校验"
+    },
+    {
+      "id": "ai-0023",
+      "question": "Prompt 工程里 Chain-of-Thought 为什么有效?Zero-shot CoT 怎么写?",
+      "topic": [
+        "基础",
+        "prompt"
+      ],
+      "frequency": "mid",
+      "source": "GitHub LLMs_interview_notes",
+      "notes": "Let's think step by step"
+    },
+    {
+      "id": "ai-0024",
+      "question": "RAG 中的查询改写(Query Rewriting)有哪些方法?什么时候需要?",
+      "topic": [
+        "rag",
+        "query"
+      ],
+      "frequency": "mid",
+      "source": "2026大模型面试题库",
+      "notes": "HyDE/扩展/分解"
+    },
+    {
+      "id": "ai-0025",
+      "question": "向量数据库 Milvus、Faiss、Elasticsearch 各适合什么场景?",
+      "topic": [
+        "rag",
+        "向量库"
+      ],
+      "frequency": "mid",
+      "source": "2026大模型面试题库",
+      "notes": "规模/延迟/元数据过滤"
+    },
+    {
+      "id": "ai-0026",
+      "question": "Agent 的 Planning 能力弱怎么办?ReAct、Plan-and-Solve、Tree of Thoughts 怎么选?",
+      "topic": [
+        "agent",
+        "规划"
+      ],
+      "frequency": "mid",
+      "source": "2026大模型面试题库",
+      "notes": "复杂任务分解与搜索"
+    },
+    {
+      "id": "ai-0027",
+      "question": "MCP(Model Context Protocol) 解决了 Agent 生态的什么问题?",
+      "topic": [
+        "agent",
+        "mcp"
+      ],
+      "frequency": "mid",
+      "source": "2026大模型面试题库",
+      "notes": "工具接口标准化;待人工复核"
+    },
+    {
+      "id": "ai-0028",
+      "question": "Function Calling 的 schema 设计要注意什么?怎么防止提示注入?",
+      "topic": [
+        "agent",
+        "安全"
+      ],
+      "frequency": "mid",
+      "source": "2026大模型面试题库",
+      "notes": "参数校验/最小权限/沙箱"
+    },
+    {
+      "id": "ai-0029",
+      "question": "多轮对话里的上下文压缩有哪些策略?",
+      "topic": [
+        "agent",
+        "上下文"
+      ],
+      "frequency": "mid",
+      "source": "2026大模型面试题库",
+      "notes": "摘要/关键信息提取/滑动窗口"
+    },
+    {
+      "id": "ai-0030",
+      "question": "SFT 数据质量比数量更重要,怎么构造高质量指令数据?",
+      "topic": [
+        "微调",
+        "数据"
+      ],
+      "frequency": "mid",
+      "source": "GitHub LLMs_interview_notes",
+      "notes": "多样性/难度/格式一致"
+    },
+    {
+      "id": "ai-0031",
+      "question": "灾难性遗忘怎么缓解?继续预训练与 SFT 的配比策略?",
+      "topic": [
+        "微调",
+        "遗忘"
+      ],
+      "frequency": "mid",
+      "source": "2026大模型面试题库",
+      "notes": "replay/弹性权重固化/EWC"
+    },
+    {
+      "id": "ai-0032",
+      "question": "DPO 相比 PPO 为什么更稳定?它的损失函数做了什么假设?",
+      "topic": [
+        "微调",
+        "dpo"
+      ],
+      "frequency": "mid",
+      "source": "GitHub LLMs_interview_notes",
+      "notes": "Bradley-Terry 模型;闭式损失"
+    },
+    {
+      "id": "ai-0033",
+      "question": "Reward Model 训练容易出现什么问题?如何评估 Reward Model?",
+      "topic": [
+        "微调",
+        "rlhf"
+      ],
+      "frequency": "mid",
+      "source": "2026大模型面试题库",
+      "notes": "reward hacking/分布外"
+    },
+    {
+      "id": "ai-0034",
+      "question": "推理服务怎么做流量路由和负载均衡?长文本请求怎么避免拖垮集群?",
+      "topic": [
+        "推理优化",
+        "服务"
+      ],
+      "frequency": "mid",
+      "source": "阿里 LLM推理优化面经",
+      "notes": "prefix 缓存/按长度调度"
+    },
+    {
+      "id": "ai-0035",
+      "question": "Tensor Parallelism 和 Pipeline Parallelism 的通信开销分别在哪里?",
+      "topic": [
+        "推理优化",
+        "并行"
+      ],
+      "frequency": "mid",
+      "source": "极市社区 LLM推理优化高频面试题",
+      "notes": "all-reduce vs point-to-point"
+    },
+    {
+      "id": "ai-0036",
+      "question": "RoPE 相对位置编码怎么做长度外推?NTK-aware、YaRN、Dynamic NTA 的区别?",
+      "topic": [
+        "基础",
+        "位置编码"
+      ],
+      "frequency": "mid",
+      "source": "2026大模型面试题库",
+      "notes": "高频待人工复核"
+    },
+    {
+      "id": "ai-0037",
+      "question": "LLM 生产环境怎么监控幻觉?有哪些离线/在线指标?",
+      "topic": [
+        "工程",
+        "可观测"
+      ],
+      "frequency": "mid",
+      "source": "2026大模型面试题库",
+      "notes": "faithfulness/uncertainty/人工抽检"
+    },
+    {
+      "id": "ai-0038",
+      "question": "LLM 应用的成本优化有哪些抓手?除了模型优化,工程侧能做什么?",
+      "topic": [
+        "工程",
+        "成本"
+      ],
+      "frequency": "mid",
+      "source": "2026大模型面试题库",
+      "notes": "缓存/路由/降级/批处理"
+    },
+    {
+      "id": "ai-0039",
+      "question": "Jailbreak 和 Prompt Injection 的防御手段有哪些?",
+      "topic": [
+        "工程",
+        "安全"
+      ],
+      "frequency": "mid",
+      "source": "2026大模型面试题库",
+      "notes": "输入过滤/输出检测/权限隔离"
+    },
+    {
+      "id": "ai-0040",
+      "question": "设计一个亿级用户的 AI 客服系统,需要哪些核心模块?",
+      "topic": [
+        "系统设计",
+        "客服"
+      ],
+      "frequency": "mid",
+      "source": "2026大模型面试题库",
+      "notes": "RAG/Agent/人工接管/评估"
+    },
+    {
+      "id": "ai-0041",
+      "question": "大模型上线前为什么要做推理优化?主要从哪几个维度评估?",
+      "topic": [
+        "推理优化",
+        "评估"
+      ],
+      "frequency": "high",
+      "source": "掘金 阿里 LLM推理优化面经",
+      "notes": "延迟/吞吐/成本/用户体验"
+    },
+    {
+      "id": "ai-0042",
+      "question": "Prefix Caching 在 vLLM/SGLang 里是怎么实现的?命中条件是什么?",
+      "topic": [
+        "推理优化",
+        "缓存"
+      ],
+      "frequency": "mid",
+      "source": "2026大模型面试题库",
+      "notes": "待人工复核"
+    },
+    {
+      "id": "ai-0043",
+      "question": "MoE 模型训练和推理相比 Dense 模型有什么特殊挑战?",
+      "topic": [
+        "基础",
+        "moe"
+      ],
+      "frequency": "low",
+      "source": "2026大模型面试题库",
+      "notes": "负载均衡/专家并行"
+    },
+    {
+      "id": "ai-0044",
+      "question": "RAG 检索结果很多但答案不准,怎么判断是召回问题还是生成问题?",
+      "topic": [
+        "rag",
+        "调试"
+      ],
+      "frequency": "mid",
+      "source": "老刘说 NLP / 2026大模型面试题库",
+      "notes": "分层定位"
+    },
+    {
+      "id": "ai-0045",
+      "question": "Agent 的 Tool Use 和 Retrieval 怎么结合?RAG 作为工具与背景知识注入的区别?",
+      "topic": [
+        "agent",
+        "rag"
+      ],
+      "frequency": "mid",
+      "source": "2026大模型面试题库",
+      "notes": "主动检索 vs 静态上下文"
+    },
+    {
+      "id": "ai-0046",
+      "question": "大模型微调时学习率怎么调?warmup 和 cosine decay 的作用?",
+      "topic": [
+        "微调",
+        "训练"
+      ],
+      "frequency": "low",
+      "source": "GitHub LLMs_interview_notes",
+      "notes": "稳定训练/避免早期震荡"
+    },
+    {
+      "id": "ai-0047",
+      "question": "LLM 推理中的 decoding 方法有哪些?greedy/beam/sample 各适用场景?",
+      "topic": [
+        "推理优化",
+        "decoding"
+      ],
+      "frequency": "mid",
+      "source": "2026大模型面试题库",
+      "notes": "多样性/确定性/创造性"
+    },
+    {
+      "id": "ai-0048",
+      "question": "怎么评估一个 RAG 系统的好坏?离线评估和在线评估分别怎么做?",
+      "topic": [
+        "rag",
+        "评估"
+      ],
+      "frequency": "high",
+      "source": "老刘说 NLP / 2026大模型面试题库",
+      "notes": "数据集/A/B 测试/用户反馈"
+    }
+  ]
+}

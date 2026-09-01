@@ -6,8 +6,11 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 
+from .. import reviewer
 from ..config import ensure_data_dirs, settings
+from ..content.loader import get_fact_cards, get_question_bank
 from ..llm import prompts
 from ..llm.provider import get_provider
 from ..persist import upsert_script
@@ -16,6 +19,51 @@ from ..schemas import EpisodeRec, PlanRec, Question, ScriptOut
 _SPEAKER_CN = {"host": "主持人", "expert": "专家"}
 _SECTION_KEYS = ("S0", "S1", "S2", "S3", "S4")
 _SECTION_TITLES = ("回顾与开场", "核心知识点", "高频面试问法", "答题框架", "易错点与自测")
+
+
+class ScriptBlockedError(RuntimeError):
+    """脚本被事实审稿拦截(hard 硬伤),job 层按普通失败走重试/失败路径(docs/07 §3.1)。"""
+
+
+def _episode_text(plan: PlanRec, ep: EpisodeRec) -> str:
+    """提取 episode 主题文本,用于题库关键词匹配。"""
+    parts = [
+        plan.title,
+        ep.title,
+        ep.goal,
+        ep.outline,
+        plan.direction,
+    ] + list(ep.objectives)
+    return " ".join(str(p) for p in parts if p).lower()
+
+
+def _match_questions(plan: PlanRec, ep: EpisodeRec, min_count: int = 2) -> list[dict]:
+    """按 episode 主题关键词匹配题库,不足时以方向高频题补齐(docs/07 §2)。"""
+    text = _episode_text(plan, ep)
+    all_questions = get_question_bank(plan.direction)
+    matched: list[dict] = []
+    seen: set[str] = set()
+    for q in all_questions:
+        qid = q.get("id")
+        topics = [str(t).lower() for t in q.get("topic", []) if t]
+        if any(topic in text for topic in topics):
+            if qid not in seen:
+                matched.append(q)
+                seen.add(qid)
+    if len(matched) < min_count:
+        high = [q for q in all_questions if q.get("frequency") == "high" and q.get("id") not in seen]
+        matched.extend(high[: min_count - len(matched)])
+    return matched[:6]  # 注入上限,避免 prompt 过长
+
+
+def _s2_grounding_prompt(questions: list[dict]) -> str:
+    """生成 S2 高频问法注入文本。"""
+    if not questions:
+        return ""
+    lines = ["【本集必须覆盖的题库高频问法】(S2 段至少包含其中 2 题,可改写题面但保留考点)"]
+    for q in questions:
+        lines.append(f"- {q.get('question', '')}")
+    return "\n".join(lines)
 
 
 def load_script(episode_id: str) -> dict | None:
@@ -88,8 +136,37 @@ def _normalise_sections(out: ScriptOut, script_format: str) -> list[dict]:
     return sections
 
 
-async def _gen(plan: PlanRec, ep: EpisodeRec, target_words: int, extra_note: str = "") -> ScriptOut:
+async def _review(data: dict, ep: EpisodeRec, matched: list[dict]) -> dict:
+    """TTS 前事实审稿(docs/07 §3.1):hard 拦截,ReviewerError fail-open 放行留痕。
+
+    事实卡按已匹配题库题的 topic 关键词选取,最多 3 张防 prompt 膨胀。
+    """
+    keywords = sorted({str(t) for q in matched for t in q.get("topic", []) if t})
+    cards = get_fact_cards(keywords)[:3]
+    try:
+        result = await reviewer.review_script(data, cards)
+    except reviewer.ReviewerError as exc:
+        print(f"[reviewer] {ep.episode_id} 审稿失败,fail-open 放行: {exc}")
+        return {
+            "verdict": "pass", "flags": [], "reviewer_model": "",
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "pending_error": str(exc),
+        }
+    if result.verdict == "block":
+        hard = [f for f in result.flags if f.type == "hard"]
+        summary = ";".join(f"{f.quote[:40]}→{f.reason[:60]}" for f in hard[:3])
+        raise ScriptBlockedError(f"{ep.episode_id} 事实审稿拦截({len(hard)} 处硬伤): {summary}")
+    return result.model_dump()
+
+
+async def _gen(plan: PlanRec, ep: EpisodeRec, target_words: int, extra_note: str = "",
+               s2_questions: list[dict] | None = None) -> ScriptOut:
+    if s2_questions is None:
+        s2_questions = _match_questions(plan, ep)
     user = prompts.scriptwriter_user(plan, ep, _recap_questions(plan, ep.seq), target_words)
+    s2_grounding = _s2_grounding_prompt(s2_questions)
+    if s2_grounding:
+        user += f"\n\n{s2_grounding}"
     if extra_note:
         user += f"\n\n【修正】{extra_note}"
     result = await get_provider().complete(
@@ -119,14 +196,16 @@ async def write_script(plan: PlanRec, ep: EpisodeRec, *, force: bool = False) ->
         return existing
 
     target_words = ep.target_minutes * settings.words_per_minute
-    out = await _gen(plan, ep, target_words)
+    matched = _match_questions(plan, ep)  # grounding 与审稿选卡共用一次匹配
+    out = await _gen(plan, ep, target_words, s2_questions=matched)
 
     # 长度门禁:落在 0.75-1.25 倍区间外,带修正说明重出一次
     n = len(out.content_md)
     if not (target_words * 0.75 <= n <= target_words * 1.25):
         print(f"[script] 字数 {n} 超出目标区间 [{int(target_words * 0.75)}, {int(target_words * 1.25)}],修正重出")
         out = await _gen(plan, ep, target_words,
-                         f"上一次正文 {n} 字,不符合要求。请重写,严格控制在 {int(target_words * 0.9)} 到 {int(target_words * 1.1)} 字之间,宁精勿滥。")
+                         f"上一次正文 {n} 字,不符合要求。请重写,严格控制在 {int(target_words * 0.9)} 到 {int(target_words * 1.1)} 字之间,宁精勿滥。",
+                         s2_questions=matched)
 
     # 质量校验:五段内容长度 + 恰好 3 道自测题(docs/02 §6 输出校验)
     n_chars = len(out.content_md)
@@ -153,6 +232,8 @@ async def write_script(plan: PlanRec, ep: EpisodeRec, *, force: bool = False) ->
         "usage_tokens": getattr(out, "_usage", 0),
         "status": "scripted",
     }
+    if settings.reviewer_enabled:
+        data["review"] = await _review(data, ep, matched)  # 拦在落盘前,block 则本轮作废
     save_script(ep.episode_id, data)
     _wipe_derived(ep.episode_id)  # 脚本变了,下游产物全部作废
     await upsert_script(ep.episode_id, data)  # 双写 DB:script + question(docs/05 M2-5)
