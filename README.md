@@ -51,6 +51,7 @@ python -m drivecast generate <plan_id>      # 整计划批量
 python -m drivecast list <plan_id>
 python -m drivecast dbsync                  # 存量文件产物导入 SQLite
 .venv/bin/alembic upgrade head              # DB 迁移（新环境一把建表）
+.venv/bin/python -m unittest discover -s tests   # 跑全部测试
 ```
 
 ## 文档导航
@@ -63,3 +64,4 @@ python -m drivecast dbsync                  # 存量文件产物导入 SQLite
 | [docs/03-audio-pipeline.md](docs/03-audio-pipeline.md) | 音频管线：TTS 友好化、edge-tts 合成、ffmpeg 后处理、车载优化 |
 | [docs/04-frontend.md](docs/04-frontend.md) | 前端：播放页（开车场景）、SSE 进度、题库复习页、无构建方案 |
 | [docs/05-roadmap.md](docs/05-roadmap.md) | 分阶段实施路线图（WBS）、MVP 切点、各阶段验收标准 |
+| [docs/06-deploy.md](docs/06-deploy.md) | 服务器部署指南：前置要求、步骤化部署、systemd、安全防护、备份与故障排查 |
