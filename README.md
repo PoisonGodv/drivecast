@@ -65,3 +65,5 @@ python -m drivecast dbsync                  # 存量文件产物导入 SQLite
 | [docs/04-frontend.md](docs/04-frontend.md) | 前端：播放页（开车场景）、SSE 进度、题库复习页、无构建方案 |
 | [docs/05-roadmap.md](docs/05-roadmap.md) | 分阶段实施路线图（WBS）、MVP 切点、各阶段验收标准 |
 | [docs/06-deploy.md](docs/06-deploy.md) | 服务器部署指南：前置要求、步骤化部署、systemd、安全防护、备份与故障排查 |
+| [docs/07-content-reliability.md](docs/07-content-reliability.md) | 内容可靠性契约：题库 grounding、事实审稿 pass、事实卡、勘误再生成 |
+| [docs/08-qc-checklist.md](docs/08-qc-checklist.md) | 发布前真听质检 checklist（人审品控流程） |
