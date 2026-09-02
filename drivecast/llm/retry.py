@@ -17,6 +17,7 @@ _RETRYABLE = (
     openai.APIConnectionError,
     openai.InternalServerError,   # 5xx
     openai.RateLimitError,        # 429
+    asyncio.TimeoutError,         # provider wall-clock 硬超时(网关挂起属瞬态,应退避重试)
 )
 
 

@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from dataclasses import dataclass, field
@@ -70,21 +71,26 @@ class OpenAICompatProvider:
             kwargs["response_format"] = {"type": "json_object"}
 
         async def _call() -> LLMResult:
-            try:
-                resp = await self._client.chat.completions.create(
-                    model=self.model, messages=messages, temperature=temperature, **kwargs
-                )
-            except openai.BadRequestError as exc:
-                # provider 不支持 response_format → 降级纯文本重试一次
-                if json_mode and "response_format" in str(exc):
+            # wall-clock 硬超时:SDK timeout 在网关挂起(Cloudflare 522 类)时可能不触发,
+            # 不加这一层单次 LLM 调用可无限阻塞 worker 队列(docs/06 §10 故障排查)。
+            async def _raw() -> LLMResult:
+                try:
                     resp = await self._client.chat.completions.create(
-                        model=self.model, messages=messages, temperature=temperature
+                        model=self.model, messages=messages, temperature=temperature, **kwargs
                     )
-                else:
-                    raise
-            msg = resp.choices[0].message.content or ""
-            usage = resp.usage.total_tokens if resp.usage else 0
-            return LLMResult(content=msg, usage_tokens=usage, model=self.model)
+                except openai.BadRequestError as exc:
+                    # provider 不支持 response_format → 降级纯文本重试一次
+                    if json_mode and "response_format" in str(exc):
+                        resp = await self._client.chat.completions.create(
+                            model=self.model, messages=messages, temperature=temperature
+                        )
+                    else:
+                        raise
+                msg = resp.choices[0].message.content or ""
+                usage = resp.usage.total_tokens if resp.usage else 0
+                return LLMResult(content=msg, usage_tokens=usage, model=self.model)
+
+            return await asyncio.wait_for(_raw(), timeout=self.timeout)
 
         return await with_retry(_call, max_attempts=settings.llm_max_retries, what="llm-chat")
 
