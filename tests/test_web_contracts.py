@@ -167,7 +167,7 @@ class WebContractsTest(unittest.TestCase):
 
 
 class PlanLifecycleContractsTest(unittest.TestCase):
-    """计划取消/恢复、播放位置钳制、音频路径自愈的 Web 契约。"""
+    """计划永久删除、运行中任务终止、播放位置钳制与路径自愈的 Web 契约。"""
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -221,51 +221,34 @@ class PlanLifecycleContractsTest(unittest.TestCase):
         async with db.session() as s:
             return await s.get(model, pk)
 
-    def test_cancel_plan_clears_pending_jobs_and_marks_episodes(self) -> None:
-        res = self.client.post("/api/plans/1/cancel")
+    def test_delete_plan_permanently_removes_records_and_files(self) -> None:
+        script_file = settings.script_path("ep_c1")
+        script_file.parent.mkdir(parents=True, exist_ok=True)
+        script_file.write_text('{"episode_id":"ep_c1"}', "utf-8")
+
+        res = self.client.delete("/api/plans/1")
         self.assertEqual(res.status_code, 200)
         body = res.json()
-        self.assertEqual(body["status"], "cancelled")
+        self.assertEqual(body["status"], "deleted")
         self.assertEqual(body["cancelled_jobs"], 1)
-        self.assertEqual(body["cancelled_episodes"], 1)
+        self.assertEqual(body["deleted_episodes"], 2)
 
-        self.assertEqual((asyncio.run(self._row(Plan, 1))).status, "cancelled")
-        self.assertEqual((asyncio.run(self._row(Episode, 1))).status, "ready")      # 已就绪集保留
-        self.assertEqual((asyncio.run(self._row(Episode, 2))).status, "cancelled")
-        self.assertEqual((asyncio.run(self._row(Job, 1))).status, "cancelled")
+        # 计划与集彻底从 DB 移除
+        self.assertIsNone(asyncio.run(self._row(Plan, 1)))
+        self.assertIsNone(asyncio.run(self._row(Episode, 1)))
+        self.assertIsNone(asyncio.run(self._row(Episode, 2)))
+        self.assertIsNone(asyncio.run(self._row(Job, 1)))
 
-        # 重复取消幂等;取消后生成类请求被 409 拒绝
-        again = self.client.post("/api/plans/1/cancel")
-        self.assertEqual(again.status_code, 200)
-        self.assertEqual(again.json()["cancelled_jobs"], 0)
+        # 音频、脚本及计划文件全部删除
+        self.assertFalse(self.audio_path.exists())
+        self.assertFalse(script_file.exists())
+        self.assertFalse(settings.plan_path("plan_cancel").exists())
+
+        # 再次请求返回 404
+        again = self.client.delete("/api/plans/1")
+        self.assertEqual(again.status_code, 404)
         rejected = self.client.post("/api/episodes/2/generate")
-        self.assertEqual(rejected.status_code, 409)
-        rejected_all = self.client.post("/api/plans/1/generate_all")
-        self.assertEqual(rejected_all.status_code, 409)
-
-        # 已就绪集仍可播放/上报进度
-        stream = self.client.get("/api/episodes/1/audio")
-        self.assertEqual(stream.status_code, 200)
-
-    def test_activate_plan_requeues_cancelled_work(self) -> None:
-        self.client.post("/api/plans/1/cancel")
-        res = self.client.post("/api/plans/1/activate")
-        self.assertEqual(res.status_code, 200)
-        body = res.json()
-        self.assertEqual(body["status"], "pending")
-        self.assertTrue(body["job_ids"])
-
-        self.assertEqual((asyncio.run(self._row(Plan, 1))).status, "active")
-        self.assertEqual((asyncio.run(self._row(Episode, 2))).status, "pending")
-        requeued = asyncio.run(self._find_job("script", "ep_c2", "pending"))
-        self.assertIsNotNone(requeued)
-
-    async def _find_job(self, kind: str, ref_id: str, status: str):
-        from sqlalchemy import select
-        async with db.session() as s:
-            return await s.scalar(
-                select(Job).where(Job.kind == kind, Job.ref_id == ref_id, Job.status == status)
-            )
+        self.assertEqual(rejected.status_code, 404)
 
     def test_progress_report_clamps_position_into_duration(self) -> None:
         res = self.client.post("/api/episodes/1/progress", json={"position_sec": 700})
@@ -276,16 +259,16 @@ class PlanLifecycleContractsTest(unittest.TestCase):
         self.assertEqual(body["listen_status"], "done")  # 但听完判定仍按原始上报
 
     def test_cancelled_episode_is_terminal_for_production_writes(self) -> None:
-        """取消后在途 job 完成/失败都不得把集从 cancelled 拉回中间态(幽灵"写脚本中")。"""
+        """删除栅栏后在途 job 完成不得重新写入内容。"""
         from drivecast.persist import set_episode_status, upsert_script
 
-        self.client.post("/api/plans/1/cancel")
+        self.client.delete("/api/plans/1")
 
         asyncio.run(upsert_script("ep_c2", {"content": "md", "knowledge": [], "questions": []}))
-        self.assertEqual((asyncio.run(self._row(Episode, 2))).status, "cancelled")
+        self.assertIsNone(asyncio.run(self._row(Episode, 2)))
 
         asyncio.run(set_episode_status("ep_c2", "failed"))
-        self.assertEqual((asyncio.run(self._row(Episode, 2))).status, "cancelled")
+        self.assertIsNone(asyncio.run(self._row(Episode, 2)))
 
     def test_audio_stream_falls_back_and_heals_stale_db_path(self) -> None:
         """DB 存的是别的机器的绝对路径(迁移后失配)时,按 ext_id 重算并回写自愈。"""
@@ -303,6 +286,54 @@ class PlanLifecycleContractsTest(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         healed = asyncio.run(self._row(Audio, 1))
         self.assertEqual(healed.file_path, str(self.audio_path))
+
+    def test_sse_emits_canonical_status_and_not_found_on_delete(self) -> None:
+        from drivecast.web.api_plans import _episode_event
+        ev_scripted = _episode_event({"id": 1, "seq": 1, "status": "scripted"})
+        self.assertEqual(ev_scripted["status"], "scripted")
+        self.assertEqual(ev_scripted["stage"], "script")
+        self.assertEqual(ev_scripted["stage_status"], "done")
+
+        ev_tts = _episode_event({"id": 2, "seq": 2, "status": "tts_ready"})
+        self.assertEqual(ev_tts["status"], "tts_ready")
+        self.assertEqual(ev_tts["stage"], "tts")
+        self.assertEqual(ev_tts["stage_status"], "generating")
+
+        del_res = self.client.delete("/api/plans/1")
+        self.assertEqual(del_res.status_code, 200)
+        events_res = self.client.get("/api/plans/1/events")
+        self.assertEqual(events_res.status_code, 200)
+        first_chunk = next(events_res.iter_lines())
+        self.assertTrue(first_chunk.startswith("retry: 3000"))
+
+
+    def test_running_child_task_is_cancelled_on_delete(self) -> None:
+        """测试正在执行的 child task 在计划删除时能被立即 cancel 并不死常驻循环。"""
+        import asyncio
+        from drivecast.jobs import worker
+
+        async def _scenario() -> None:
+            started = asyncio.Event()
+            cancelled = asyncio.Event()
+
+            async def _long_task() -> None:
+                started.set()
+                try:
+                    await asyncio.sleep(10.0)
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+
+            task = asyncio.create_task(_long_task())
+            worker.register_running_job("plan_cancel", 999, task)
+            await started.wait()
+            count = await worker.cancel_and_await_plan_tasks("plan_cancel", timeout=3.0)
+            worker.unregister_running_job("plan_cancel", 999, task)
+            self.assertEqual(count, 1)
+            self.assertTrue(cancelled.is_set())
+            self.assertFalse(worker.has_running_job_task("plan_cancel", 999))
+
+        asyncio.run(_scenario())
 
 
 if __name__ == "__main__":

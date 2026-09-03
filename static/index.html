@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#0f1115">
   <title>DriveCast</title>
-  <link rel="stylesheet" href="/static/css/base.css">
-  <link rel="stylesheet" href="/static/css/components.css">
-  <link rel="stylesheet" href="/static/css/review.css">
+  <link rel="stylesheet" href="/static/css/base.css?v=20260903-del">
+  <link rel="stylesheet" href="/static/css/components.css?v=20260903-del">
+  <link rel="stylesheet" href="/static/css/review.css?v=20260903-del">
 </head>
 <body>
   <div id="app">
@@ -53,30 +53,14 @@
               {{ planProgress(plan).ready > 0 ? '继续听' : '查看进度' }}
             </button>
             <button
-              @click="cancelPlan(plan)"
+              @click="deletePlan(plan)"
+              :disabled="String(deletingPlanId) === String(plan.id)"
               class="btn btn-ghost btn-block"
               style="margin-top: 8px; color: var(--error);"
-            >取消计划</button>
+            >{{ String(deletingPlanId) === String(plan.id) ? '删除中…' : '删除计划' }}</button>
           </div>
           <div style="text-align:center; margin-top: 16px;">
             <a href="#/create" class="btn btn-ghost">+ 新建计划</a>
-          </div>
-          <div v-if="cancelledPlans.length" style="margin-top: 32px;">
-            <div class="card-meta" style="margin-bottom: 8px;">已取消的计划</div>
-            <div
-              v-for="plan in cancelledPlans"
-              :key="plan.id"
-              class="card plan-card"
-              style="opacity: 0.65;"
-            >
-              <div>
-                <div class="card-title">{{ plan.title }}</div>
-                <div class="card-meta">
-                  {{ planProgress(plan).ready }}/{{ planProgress(plan).total }} 集已就绪 · 已取消
-                </div>
-              </div>
-              <button @click="activatePlan(plan)" class="btn btn-ghost btn-block">恢复计划</button>
-            </div>
           </div>
         </div>
       </section>
@@ -151,12 +135,13 @@
             <h1 class="page-title" style="margin-bottom: 8px;">{{ plan.title }}</h1>
             <span class="badge" :class="'badge-' + (plan.status || 'draft')">{{ planStatusLabel(plan) }}</span>
           </div>
-          <div v-if="plan.status === 'cancelled'" class="card-meta" style="margin-bottom: 8px;">
-            计划已取消,已生成的集仍可播放
-            <button @click="activatePlan(plan)" class="btn" style="margin-left: 8px;">恢复计划</button>
-          </div>
-          <div v-else style="margin-bottom: 8px;">
-            <button @click="cancelPlan(plan)" class="btn btn-ghost" style="color: var(--error);">取消计划</button>
+          <div style="margin-bottom: 8px;">
+            <button
+              @click="deletePlan(plan)"
+              :disabled="String(deletingPlanId) === String(plan.id)"
+              class="btn btn-ghost"
+              style="color: var(--error);"
+            >{{ String(deletingPlanId) === String(plan.id) ? '删除中…' : '删除计划' }}</button>
           </div>
           <div class="card-meta" style="margin-bottom: 8px;">
             {{ planProgress(plan).ready }}/{{ planProgress(plan).total }} 集已就绪
@@ -668,6 +653,6 @@
     <div class="toast" :class="{ show: toast }">{{ toast }}</div>
   </div>
 
-  <script type="module" src="/static/js/main.js"></script>
+  <script type="module" src="/static/js/main.js?v=20260903-del"></script>
 </body>
 </html>

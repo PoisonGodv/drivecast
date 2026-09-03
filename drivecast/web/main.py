@@ -57,16 +57,27 @@ app.include_router(api_plans.router)
 app.include_router(api_audio.router)
 app.include_router(api_review.router)
 
+class NoCacheStaticFiles(StaticFiles):
+    """无构建前端禁止强缓存,确保更新即生效,彻底杜绝 Safari 混用旧 JS。"""
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
+
 # 静态资源挂 /static(与前端引用路径一致);SPA fallback 兜底 index.html(docs/04 §5)
 app.mount(
     "/static",
-    StaticFiles(directory=settings.static_dir, check_dir=False),
+    NoCacheStaticFiles(directory=settings.static_dir, check_dir=False),
     name="static",
 )
 
 
 @app.get("/{full_path:path}", include_in_schema=False)
 async def spa_fallback(full_path: str):
-    """非 API 路径一律回 index.html(hash 路由由前端接管)。"""
+    """非 API 路径一律回 index.html(hash 路由由前端接管;no-store 强制刷新)。"""
     from fastapi.responses import FileResponse
-    return FileResponse(settings.static_dir / "index.html")
+    return FileResponse(
+        settings.static_dir / "index.html",
+        headers={"Cache-Control": "no-store, must-revalidate"},
+    )

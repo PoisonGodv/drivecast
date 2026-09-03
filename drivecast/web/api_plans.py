@@ -15,7 +15,10 @@ from ..jobs import pipeline
 from ..library import artifacts
 from ..library import service as library_service
 from ..models import Job, Plan, Script, Topic
-from ..persist import set_episode_status, set_plan_episodes_status, set_plan_status
+from ..persist import (
+    finalize_plan_deletion,
+    set_episode_status,
+)
 from ..planner import service as planner
 from ..scriptwriter import service as scriptwriter
 
@@ -50,11 +53,11 @@ class PlanGenerateOut(BaseModel):
     job_ids: list[int]
 
 
-class PlanCancelOut(BaseModel):
+class PlanDeleteOut(BaseModel):
     plan_id: int
     status: str
     cancelled_jobs: int
-    cancelled_episodes: int
+    deleted_episodes: int
 
 
 class EpisodeGenerateOut(BaseModel):
@@ -159,69 +162,48 @@ async def get_plan(plan_id: int) -> dict:
     return detail
 
 
-@router.post("/plans/{plan_id}/cancel", response_model=PlanCancelOut)
-async def cancel_plan(plan_id: int) -> dict:
-    """取消计划:状态 → cancelled,清 pending job,未完成集标 cancelled。
-
-    已就绪(ready)的集与音频保留,可继续播放;重新 activate 可恢复生成。
-    """
+@router.delete("/plans/{plan_id}", response_model=PlanDeleteOut)
+async def delete_plan(plan_id: int) -> dict:
+    """永久删除计划:设置栅栏、终止正在执行的任务、清理全部文件与数据库图。"""
+    from ..jobs import worker
     plan_row = await library_service.get_plan_by_id(plan_id)
     if plan_row is None:
         raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
-    if plan_row.status == "cancelled":
-        # 幂等:重复取消直接返回当前状态
-        return {"plan_id": plan_id, "status": "cancelled", "cancelled_jobs": 0, "cancelled_episodes": 0}
 
-    await set_plan_status(plan_id, "cancelled")
-    cancelled_jobs = await pipeline.cancel_plan_jobs(plan_row.ext_id)
-    cancelled_eps = await set_plan_episodes_status(
-        plan_id,
-        from_statuses=("pending", "scripted", "tts_ready", "synth_partial"),
-        status="cancelled",
-    )
-    return {
-        "plan_id": plan_id,
-        "status": "cancelled",
-        "cancelled_jobs": cancelled_jobs,
-        "cancelled_episodes": cancelled_eps,
-    }
+    lock = pipeline.get_plan_lifecycle_lock(plan_row.ext_id)
+    async with lock:
+        fence = await pipeline.fence_plan_for_deletion(plan_id)
+        if fence is None:
+            raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
 
+        # 立即停止并等待属于本计划的当前协程/子进程
+        await worker.cancel_and_await_plan_tasks(fence.plan_ext_id)
 
-@router.post("/plans/{plan_id}/activate", response_model=PlanGenerateOut)
-async def activate_plan(plan_id: int) -> dict:
-    """恢复已取消的计划:cancelled 集回 pending,重新入队未完成部分。"""
-    plan_row = await library_service.get_plan_by_id(plan_id)
-    if plan_row is None:
-        raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
-    if plan_row.status != "cancelled":
-        return {"plan_id": plan_id, "job_id": None, "status": plan_row.status, "job_ids": []}
+        # 幂等清理所有文件产物与临时文件
+        artifacts.delete_plan_artifacts(fence.plan_ext_id, fence.episode_ext_ids)
 
-    try:
-        plan_rec = planner.load_plan(plan_row.ext_id)
-    except (OSError, ValueError) as exc:
-        # 计划文件态丢失(如手工清理 data/plans):状态未动,直接报错
-        raise HTTPException(
-            status_code=500,
-            detail={"code": 500, "message": f"plan file unreadable, activate aborted: {exc}"},
-        ) from exc
-    await set_plan_status(plan_id, "active")
-    await set_plan_episodes_status(plan_id, from_statuses=("cancelled",), status="pending")
-    job_ids = await pipeline.enqueue_plan_all(plan_rec)
-    status = "pending" if job_ids else "done"
-    return {
-        "plan_id": plan_id,
-        "job_id": job_ids[0] if job_ids else None,
-        "status": status,
-        "job_ids": job_ids,
-    }
+        # 单事务级联删除所有关联数据库记录
+        await finalize_plan_deletion(
+            fence.plan_id,
+            fence.topic_id,
+            fence.episode_ids,
+            fence.episode_ext_ids,
+        )
+
+        return {
+            "plan_id": plan_id,
+            "status": "deleted",
+            "cancelled_jobs": len(fence.cancelled_job_ids),
+            "deleted_episodes": len(fence.episode_ids),
+        }
 
 
-async def _reject_cancelled(plan_row) -> None:
-    """取消后的计划不再接受生成请求;需先 activate 恢复。"""
-    if plan_row.status == "cancelled":
+async def _assert_plan_active(plan_row) -> None:
+    """只有 active 计划允许创建/入队生成任务。"""
+    if plan_row.status != "active":
         raise HTTPException(
             status_code=409,
-            detail={"code": 409, "message": "plan cancelled, activate it first"},
+            detail={"code": 409, "message": f"plan is {plan_row.status}, generation not allowed"},
         )
 
 
@@ -236,7 +218,7 @@ async def generate_episode(episode_id: int) -> dict:
     plan = await library_service.get_plan_by_id(ep.plan_id)
     if plan is None:
         raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
-    await _reject_cancelled(plan)
+    await _assert_plan_active(plan)
     job_id = await pipeline.enqueue_episode(plan.ext_id, ep.seq, ep.ext_id)
     return {"episode_id": episode_id, "job_id": job_id, "status": "pending"}
 
@@ -247,7 +229,7 @@ async def generate_plan_all(plan_id: int) -> dict:
     plan_row = await library_service.get_plan_by_id(plan_id)
     if plan_row is None:
         raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
-    await _reject_cancelled(plan_row)
+    await _assert_plan_active(plan_row)
     plan_rec = planner.load_plan(plan_row.ext_id)
     job_ids = await pipeline.enqueue_plan_all(plan_rec)
     status = "pending" if job_ids else "done"
@@ -284,7 +266,7 @@ async def regenerate_episode(episode_id: int, body: RegenerateIn | None = None) 
     plan = await library_service.get_plan_by_id(ep.plan_id)
     if plan is None:
         raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
-    await _reject_cancelled(plan)
+    await _assert_plan_active(plan)
 
     reason = (body.reason if body else "").strip()
     if reason:
@@ -338,16 +320,18 @@ _STAGE_PERCENT = {
 
 
 def _episode_event(ep: dict) -> dict:
-    stage, status, percent = _STAGE_PERCENT.get(ep["status"], ("outline", "pending", 0))
+    stage, stage_status, percent = _STAGE_PERCENT.get(ep["status"], ("outline", "pending", 0))
     event = {
         "episode_id": ep["id"],
         "episode_ext_id": ep.get("ext_id") or f"ep_{ep['id']}",
         "seq": ep["seq"],
         "stage": stage,
-        "status": status,
+        "stage_status": stage_status,
+        # 始终保留规范的 DB 状态,防止前端被展示态(done/generating)覆盖
+        "status": ep["status"],
         "percent": percent,
     }
-    if status == "ready":
+    if ep["status"] == "ready":
         event["audio_url"] = f"/api/episodes/{ep['id']}/audio"
         event["duration_sec"] = ep.get("duration_sec", 0)
     return event
@@ -357,13 +341,13 @@ async def _plan_events(plan_id: int):
     """SSE 生成进度推送(docs/04 §3):轮询 DB 状态变化 → 推事件,EventSource 断线重连由前端负责。"""
     poll = 2.0  # 简单可靠,不额外依赖
     last_statuses: dict[int, str] = {}
-    last_plan_key: tuple[int, int, bool] | None = None
+    last_plan_key: tuple[str, int, int, bool] | None = None
     try:
         yield f"retry: 3000\n\n"
         while True:
             detail = await library_service.get_plan(plan_id)
             if detail is None:
-                yield f"event: plan_status\ndata: {json.dumps({'plan_id': str(plan_id), 'ready': 0, 'total': 0, 'all_done': False, 'error': 'not_found'})}\n\n"
+                yield f"event: plan_status\ndata: {json.dumps({'plan_id': plan_id, 'ext_id': '', 'status': 'not_found', 'ready': 0, 'total': 0, 'all_done': False, 'error': 'not_found'})}\n\n"
                 break
 
             # episode 状态变化时推 episode_status
@@ -374,15 +358,16 @@ async def _plan_events(plan_id: int):
                     yield f"event: episode_status\ndata: {json.dumps(event)}\n\n"
                     last_statuses[ep["id"]] = ep["status"]
 
-            # plan 总进度变化时推 plan_status
+            # plan 总进度或状态变化时推 plan_status
+            plan_status = detail.get("status", "active")
             ready = detail["ready_count"]
             total = detail["episode_count"]
             all_done = total > 0 and ready == total
-            key = (ready, total, all_done)
+            key = (plan_status, ready, total, all_done)
             if key != last_plan_key:
                 yield (
                     f"event: plan_status\n"
-                    f"data: {json.dumps({'plan_id': detail['ext_id'], 'ready': ready, 'total': total, 'all_done': all_done})}\n\n"
+                    f"data: {json.dumps({'plan_id': plan_id, 'ext_id': detail['ext_id'], 'status': plan_status, 'ready': ready, 'total': total, 'all_done': all_done})}\n\n"
                 )
                 last_plan_key = key
 

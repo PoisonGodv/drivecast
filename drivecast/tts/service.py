@@ -31,8 +31,18 @@ async def _run(cmd: list[str]) -> tuple[int, str]:
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
-    stdout, stderr = await proc.communicate()
-    return proc.returncode, (stdout + stderr).decode("utf-8", "ignore")
+    try:
+        stdout, stderr = await proc.communicate()
+        return proc.returncode, (stdout + stderr).decode("utf-8", "ignore")
+    except asyncio.CancelledError:
+        if proc.returncode is None:
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+        raise
 
 
 async def _silence_file(ms: int) -> Path:

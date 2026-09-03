@@ -10,7 +10,7 @@ from pathlib import Path
 from sqlalchemy import select, update
 
 from .db import session
-from .models import Audio, Episode, Plan, Question, Script, Topic
+from .models import Audio, Episode, Job, Plan, Question, ReviewReplay, Script, Topic
 from .schemas import PlanRec
 
 
@@ -55,6 +55,13 @@ async def upsert_script(ep_ext_id: str, data: dict) -> None:
         ep_id = await s.scalar(select(Episode.id).where(Episode.ext_id == ep_ext_id))
         if ep_id is None:
             return  # plan 未入库(纯文件态运行),跳过双写
+        # 先更新 Episode 状态:若已被删除栅栏标为 cancelled,则整笔写入作废,不插入残留行
+        result = await s.execute(
+            update(Episode).where(Episode.id == ep_id, Episode.status != "cancelled")
+            .values(status="scripted")
+        )
+        if result.rowcount == 0:
+            return
         exists = await s.scalar(select(Script.id).where(Script.episode_id == ep_id))
         if exists is None:
             s.add(Script(episode_id=ep_id, content_md=data["content"],
@@ -67,14 +74,11 @@ async def upsert_script(ep_ext_id: str, data: dict) -> None:
                         knowledge=json.dumps(data.get("knowledge", []), ensure_ascii=False),
                         token_usage=data.get("usage_tokens", 0))
             )
-            # 重生成:旧题作废重插(掌握度记录随之重置,可接受——内容已变)
             from sqlalchemy import delete
             await s.execute(delete(Question).where(Question.episode_id == ep_id))
         knowledge = [str(item).strip() for item in data.get("knowledge", []) if str(item).strip()]
         default_kp = f"episode:{ep_id}"
         if knowledge:
-            # 当前 LLM 题目尚未逐题携带 kp_id;同集作为一个可独立讲透的知识单元,
-            # 先用首个知识点作稳定分组。旧行由 0002 回填 episode:<id>。
             default_kp = f"knowledge:{knowledge[0]}"
         for q in data.get("questions", []):
             kp_id = str(q.get("kp_id", "")).strip() or default_kp
@@ -84,12 +88,6 @@ async def upsert_script(ep_ext_id: str, data: dict) -> None:
                 framework=json.dumps(q.get("framework", []), ensure_ascii=False),
                 difficulty=q.get("difficulty", "medium"),
             ))
-        await s.execute(
-            # cancelled 是集级终态:取消时在途的 script/tts job 完成后不得覆盖,
-            # 否则该集卡在 scripted 等一个已被拦掉的链式 tts(幽灵"写脚本中")
-            update(Episode).where(Episode.id == ep_id, Episode.status != "cancelled")
-            .values(status="scripted")
-        )
         await s.commit()
 
 
@@ -97,6 +95,12 @@ async def upsert_audio(ep_ext_id: str, meta: dict, voice: str) -> None:
     async with session() as s:
         ep_id = await s.scalar(select(Episode.id).where(Episode.ext_id == ep_ext_id))
         if ep_id is None:
+            return
+        result = await s.execute(
+            update(Episode).where(Episode.id == ep_id, Episode.status != "cancelled")
+            .values(status="ready")
+        )
+        if result.rowcount == 0:
             return
         path = meta["audio_path"]
         size = Path(path).stat().st_size if Path(path).exists() else 0
@@ -114,10 +118,6 @@ async def upsert_audio(ep_ext_id: str, meta: dict, voice: str) -> None:
                         duration_sec=int(round(meta.get("duration_sec", 0))), size_bytes=size,
                         meta_json=meta_json, quality_status=quality_status)
             )
-        await s.execute(
-            update(Episode).where(Episode.id == ep_id, Episode.status != "cancelled")
-            .values(status="ready")
-        )
         await s.commit()
 
 
@@ -128,6 +128,32 @@ async def set_episode_status(ep_ext_id: str, status: str) -> None:
             update(Episode).where(Episode.ext_id == ep_ext_id, Episode.status != "cancelled")
             .values(status=status)
         )
+        await s.commit()
+
+
+async def finalize_plan_deletion(plan_id: int, topic_id: int, ep_ids: list[int], ep_ext_ids: list[str]) -> None:
+    """单事务级联物理删除 Plan 及所有关联业务与学习数据;孤立 Topic 顺带清理。"""
+    from sqlalchemy import delete
+    async with session() as s:
+        if ep_ids:
+            # 1. 学习闭环派生记录
+            await s.execute(delete(ReviewReplay).where(ReviewReplay.episode_id.in_(ep_ids)))
+            await s.execute(delete(Question).where(Question.episode_id.in_(ep_ids)))
+            # 2. 生产产物记录
+            await s.execute(delete(Audio).where(Audio.episode_id.in_(ep_ids)))
+            await s.execute(delete(Script).where(Script.episode_id.in_(ep_ids)))
+        if ep_ext_ids:
+            # 3. 队列表任务
+            await s.execute(delete(Job).where(Job.ref_id.in_(ep_ext_ids)))
+        # 4. 集与计划本体
+        await s.execute(delete(Episode).where(Episode.plan_id == plan_id))
+        await s.execute(delete(Plan).where(Plan.id == plan_id))
+
+        # 5. 孤立 Topic 检查并删除
+        other_plans = await s.scalar(select(Plan.id).where(Plan.topic_id == topic_id).limit(1))
+        if other_plans is None:
+            await s.execute(delete(Topic).where(Topic.id == topic_id))
+
         await s.commit()
 
 

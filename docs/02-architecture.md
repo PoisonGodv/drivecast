@@ -193,9 +193,8 @@ CREATE INDEX idx_question_review ON question(next_review_at);
 | POST | `/api/plans` | 由主题生成学习计划（入 job，异步） |
 | GET | `/api/plans` | 计划列表 |
 | GET | `/api/plans/{id}` | 计划详情（含 episodes + 各集 status/进度） |
-| POST | `/api/plans/{id}/cancel` | 取消计划：清 pending job、未完成集标 cancelled（终态）；已就绪集保留可播放；幂等 |
-| POST | `/api/plans/{id}/activate` | 恢复已取消计划：cancelled 集回 pending，重新入队未完成部分 |
-| POST | `/api/episodes/{id}/generate` | 触发该集 script+tts（入 job；计划已取消返回 409） |
+| DELETE | `/api/plans/{id}` | 永久删除计划：中止当前执行任务、清除全部音频/脚本/自测题/复习记录与文件；幂等 |
+| POST | `/api/episodes/{id}/generate` | 触发该集 script+tts（入 job；计划非 active 返回 409） |
 | POST | `/api/plans/{id}/generate_all` | 整计划批量生成 |
 | GET | `/api/jobs/{id}` | 任务状态查询（兜底;主推送走 SSE） |
 | GET | `/api/plans/{id}/events` | **SSE 生成进度推送**（主通道,协议见 04 §3） |

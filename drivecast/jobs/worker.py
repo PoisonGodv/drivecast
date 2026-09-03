@@ -17,7 +17,7 @@ from sqlalchemy import select, update
 
 from ..config import settings
 from ..db import close_db, session
-from ..models import Job, Plan
+from ..models import Episode, Job, Plan
 from ..persist import set_episode_status
 from ..planner import service as planner
 from ..scriptwriter import service as scriptwriter
@@ -27,16 +27,67 @@ _STALE_CHECK_INTERVAL = 60.0  # 空轮询时最多每分钟做一次超时 runni
 _BACKOFF_INITIAL = 2.0
 _BACKOFF_MAX = 60.0
 
+# 进程内正在运行的 job task 映射:plan_ext_id -> {job_id: task}
+_active_plan_tasks: dict[str, dict[int, asyncio.Task]] = {}
+
+
+def register_running_job(plan_ext_id: str, job_id: int, task: asyncio.Task) -> None:
+    if plan_ext_id not in _active_plan_tasks:
+        _active_plan_tasks[plan_ext_id] = {}
+    _active_plan_tasks[plan_ext_id][job_id] = task
+
+
+def unregister_running_job(plan_ext_id: str, job_id: int, task: asyncio.Task) -> None:
+    bucket = _active_plan_tasks.get(plan_ext_id)
+    if not bucket:
+        return
+    if bucket.get(job_id) is task:
+        bucket.pop(job_id, None)
+    if not bucket:
+        _active_plan_tasks.pop(plan_ext_id, None)
+
+
+async def cancel_and_await_plan_tasks(plan_ext_id: str, timeout: float = 15.0) -> int:
+    """立即取消属于该计划的所有正在执行的 child task 并等待其停止。"""
+    bucket = list(_active_plan_tasks.get(plan_ext_id, {}).values())
+    if not bucket:
+        return 0
+    for task in bucket:
+        if not task.done():
+            task.cancel()
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*bucket, return_exceptions=True),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError as exc:
+        raise RuntimeError(f"timeout waiting for plan {plan_ext_id} running jobs to cancel") from exc
+    return len(bucket)
+
+
+def has_running_job_task(plan_ext_id: str, job_id: int) -> bool:
+    task = _active_plan_tasks.get(plan_ext_id, {}).get(job_id)
+    return bool(task and not task.done())
+
 
 def _now_text() -> str:
     return datetime.now().isoformat(sep=" ", timespec="seconds")
 
 
 async def _rescan_orphans() -> int:
-    """启动恢复:running → pending(docs/02 §6 断点续跑核心)。"""
+    """启动恢复:只复位仍属于 active 计划的 running job 为 pending。"""
     async with session() as s:
+        active_plan_ep_ext_ids = (
+            await s.execute(
+                select(Episode.ext_id)
+                .join(Plan, Plan.id == Episode.plan_id)
+                .where(Plan.status == "active")
+            )
+        ).scalars().all()
+        if not active_plan_ep_ext_ids:
+            return 0
         result = await s.execute(
-            update(Job).where(Job.status == "running")
+            update(Job).where(Job.status == "running", Job.ref_id.in_(active_plan_ep_ext_ids))
             .values(status="pending", updated_at=_now_text())
         )
         await s.commit()
@@ -44,16 +95,27 @@ async def _rescan_orphans() -> int:
 
 
 async def _reset_stale_running() -> int:
-    """复位挂死的 running(超过 worker_stale_running_sec 无进展视为孤儿)。
-
-    只在空轮询分支调用:队列还有 pending 时说明 worker 活着,不冒险重复执行。
-    """
+    """复位挂死的 running(仅限 active 计划)。"""
     threshold = (datetime.now() - timedelta(seconds=settings.worker_stale_running_sec)).isoformat(
         sep=" ", timespec="seconds"
     )
     async with session() as s:
+        active_plan_ep_ext_ids = (
+            await s.execute(
+                select(Episode.ext_id)
+                .join(Plan, Plan.id == Episode.plan_id)
+                .where(Plan.status == "active")
+            )
+        ).scalars().all()
+        if not active_plan_ep_ext_ids:
+            return 0
         result = await s.execute(
-            update(Job).where(Job.status == "running", Job.updated_at < threshold)
+            update(Job)
+            .where(
+                Job.status == "running",
+                Job.updated_at < threshold,
+                Job.ref_id.in_(active_plan_ep_ext_ids),
+            )
             .values(status="pending", updated_at=_now_text())
         )
         await s.commit()
@@ -68,46 +130,47 @@ async def _next_pending() -> Job | None:
         if row is None:
             return None
         result = await s.execute(
-            # 原子认领:WHERE 带 status='pending' 守卫,web 常驻 worker 与 CLI 并存时不重复执行
             update(Job).where(Job.id == row.id, Job.status == "pending")
             .values(status="running", attempt=Job.attempt + 1, updated_at=_now_text())
         )
         await s.commit()
         if result.rowcount == 0:
-            return None  # 被并发消费者抢先,本轮放弃
-        # ORM-enabled UPDATE(synchronize_session=auto)已把内存 attempt 同步为
-        # DB 更新后的值(实测验证),不再手动 +1——那会双重累加。
+            return None
         return row
 
 
-async def _finish(job_id: int, status: str, error: str = "") -> None:
+async def _finish(job_id: int, status: str, error: str = "") -> bool:
+    """带 CAS 守卫更新终态:只能由 running 转移;返回是否成功。"""
     async with session() as s:
-        await s.execute(
-            update(Job).where(Job.id == job_id)
+        result = await s.execute(
+            update(Job).where(Job.id == job_id, Job.status == "running")
             .values(status=status, error=error, updated_at=_now_text())
         )
         await s.commit()
+        return result.rowcount > 0
 
 
-async def _plan_cancelled(plan_ext_id: str) -> bool:
-    """计划已取消则 True;纯文件态计划(未入库)视为未取消。"""
+async def _plan_active(plan_ext_id: str) -> bool:
+    """计划存在且为 active 返回 True;其余(cancelled/deleting/不存在)返回 False。"""
     if not plan_ext_id:
         return False
     async with session() as s:
         status = await s.scalar(select(Plan.status).where(Plan.ext_id == plan_ext_id))
-    return status == "cancelled"
+    return status == "active"
 
 
 async def _retry_or_fail(job: Job, exc: BaseException) -> None:
     err = f"{type(exc).__name__}: {exc}"[-500:]
     if job.attempt < job.max_attempt:
-        await _finish(job.id, "pending", err)  # 回 pending 重试
-        print(f"[worker] job#{job.id} {job.kind}/{job.ref_id} 第{job.attempt}次失败,回队列重试: {err[:120]}")
+        cas_ok = await _finish(job.id, "pending", err)
+        if cas_ok:
+            print(f"[worker] job#{job.id} {job.kind}/{job.ref_id} 第{job.attempt}次失败,回队列重试: {err[:120]}")
     else:
-        await _finish(job.id, "failed", err)
-        await set_episode_status(job.ref_id, "failed")
-        print(f"[worker] job#{job.id} {job.kind}/{job.ref_id} 失败(已达{job.max_attempt}次): {err[:120]}")
-        traceback.print_exception(exc)
+        cas_ok = await _finish(job.id, "failed", err)
+        if cas_ok:
+            await set_episode_status(job.ref_id, "failed")
+            print(f"[worker] job#{job.id} {job.kind}/{job.ref_id} 失败(已达{job.max_attempt}次): {err[:120]}")
+            traceback.print_exception(exc)
 
 
 async def _run_script_job(job: Job) -> None:
@@ -115,17 +178,13 @@ async def _run_script_job(job: Job) -> None:
     plan = planner.load_plan(payload["plan_id"])
     ep = next(e for e in plan.episodes if e.seq == payload["seq"])
     await scriptwriter.write_script(plan, ep)
-    await _finish(job.id, "done")
     from .pipeline import enqueue
-    if await _plan_cancelled(plan.plan_id):
-        print(f"[worker] job#{job.id} 所属计划已取消,不链式入队 tts")
+    if not await _plan_active(plan.plan_id):
+        print(f"[worker] job#{job.id} 所属计划非 active,停止后续入队")
+        await _finish(job.id, "cancelled", "plan not active")
         return
-    try:
-        await enqueue("tts", ep.episode_id, {"plan_id": plan.plan_id, "seq": ep.seq})  # 链式入队 tts
-    except Exception as exc:  # noqa: BLE001
-        # tts 断链比脚本白跑更糟(DB 抖动常见):显式标 failed 让 UI 可重试,不静默吞掉
-        print(f"[worker] job#{job.id} tts 链式入队失败: {exc}")
-        await _finish(job.id, "failed", f"tts enqueue failed: {exc}")
+    await enqueue("tts", ep.episode_id, {"plan_id": plan.plan_id, "seq": ep.seq})
+    await _finish(job.id, "done")
 
 
 async def _run_tts_job(job: Job) -> None:
@@ -139,7 +198,6 @@ async def _run_tts_job(job: Job) -> None:
 
 
 async def _run_audio_upgrade_job(job: Job) -> None:
-    """仅复用既有脚本/chunk 做 M6 后处理；缺产物就明确失败，绝不补调 LLM/TTS。"""
     payload = json.loads(job.payload)
     plan = planner.load_plan(payload["plan_id"])
     script = scriptwriter.load_script(job.ref_id)
@@ -168,19 +226,43 @@ _EXECUTORS = {
 }
 
 
-async def _execute_one(job: Job) -> None:
-    """执行单个 job,含错误处理与重试。"""
-    print(f"[worker] 执行 job#{job.id} {job.kind}/{job.ref_id} (第{job.attempt}次)")
-    payload = json.loads(job.payload)
-    if await _plan_cancelled(str(payload.get("plan_id") or "")):
-        await _finish(job.id, "cancelled")
-        print(f"[worker] job#{job.id} 所属计划已取消,标记 cancelled 跳过")
-        return
+async def _execute_job_task(job: Job, plan_ext_id: str) -> None:
     try:
         await _EXECUTORS[job.kind](job)
         print(f"[worker] job#{job.id} 完成")
+    except asyncio.CancelledError:
+        print(f"[worker] job#{job.id} 收到取消信号")
+        await _finish(job.id, "cancelled", "job cancelled")
+        raise
     except Exception as exc:  # noqa: BLE001
         await _retry_or_fail(job, exc)
+
+
+async def _execute_one(job: Job) -> None:
+    """执行单个 job:包装为独立 child task 并登记,支持被计划删除立即终止。"""
+    from .pipeline import get_plan_lifecycle_lock
+    print(f"[worker] 执行 job#{job.id} {job.kind}/{job.ref_id} (第{job.attempt}次)")
+    payload = json.loads(job.payload)
+    plan_ext_id = str(payload.get("plan_id") or "")
+    lock = get_plan_lifecycle_lock(plan_ext_id)
+    current_task = asyncio.current_task()
+    assert current_task is not None
+
+    async with lock:
+        if not await _plan_active(plan_ext_id):
+            await _finish(job.id, "cancelled", "plan not active")
+            print(f"[worker] job#{job.id} 所属计划非 active,标记 cancelled 跳过")
+            return
+        child_task = asyncio.create_task(_execute_job_task(job, plan_ext_id))
+        register_running_job(plan_ext_id, job.id, child_task)
+
+    try:
+        await child_task
+    except asyncio.CancelledError:
+        # child task 被计划删除 API 取消属于正常业务中断,不杀常驻 worker
+        pass
+    finally:
+        unregister_running_job(plan_ext_id, job.id, child_task)
 
 
 async def run_until_empty() -> None:

@@ -5,7 +5,9 @@ worker 串行消费天然防 edge-tts 限流(docs/03 §3.3)。
 """
 from __future__ import annotations
 
+import asyncio
 import json
+from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import select, update
@@ -13,10 +15,36 @@ from sqlalchemy import select, update
 from ..db import session
 from ..models import Episode, Job, Plan
 
+_plan_locks: dict[str, asyncio.Lock] = {}
+
+
+def get_plan_lifecycle_lock(plan_ext_id: str) -> asyncio.Lock:
+    """按 plan_ext_id 互斥,封堵 worker 认领注册与删除/生成之间的竞态窗口。"""
+    if plan_ext_id not in _plan_locks:
+        _plan_locks[plan_ext_id] = asyncio.Lock()
+    return _plan_locks[plan_ext_id]
+
+
+@dataclass
+class PlanDeletionFence:
+    plan_id: int
+    plan_ext_id: str
+    topic_id: int
+    episode_ids: list[int]
+    episode_ext_ids: list[str]
+    cancelled_job_ids: list[int]
+    running_job_ids: list[int]
+
 
 async def enqueue(kind: str, ep_ext_id: str, payload: dict) -> int:
-    """入队(幂等:同 kind+ref_id 的未完成 job 已存在则复用)。"""
+    """入队(幂等:同 kind+ref_id 的未完成 job 已存在则复用;计划非 active 拒绝)。"""
     async with session() as s:
+        plan_ext_id = str(payload.get("plan_id") or "")
+        if plan_ext_id:
+            plan_status = await s.scalar(select(Plan.status).where(Plan.ext_id == plan_ext_id))
+            if plan_status != "active":
+                raise RuntimeError(f"plan {plan_ext_id} not active, enqueue rejected")
+
         existing = await s.scalar(
             select(Job.id).where(
                 Job.kind == kind, Job.ref_id == ep_ext_id,
@@ -31,13 +59,62 @@ async def enqueue(kind: str, ep_ext_id: str, payload: dict) -> int:
         return job.id
 
 
-async def cancel_plan_jobs(plan_ext_id: str) -> int:
-    """取消计划:把该计划所有 pending job 标 cancelled。
+async def fence_plan_for_deletion(plan_id: int) -> PlanDeletionFence | None:
+    """设置删除栅栏(单事务):plan/jobs/episodes 全部标 cancelled,提取关联 ID。"""
+    now = datetime.now().isoformat(sep=" ", timespec="seconds")
+    async with session() as s:
+        plan = await s.get(Plan, plan_id)
+        if plan is None:
+            return None
 
-    running job 无法原地中止——worker 执行前与 script→tts 链式入队前都会
-    再查 plan 状态,running 的自然终止于 cancelled,不会续跑下一环。
-    返回被取消的 job 数。
-    """
+        episodes = (
+            await s.execute(
+                select(Episode.id, Episode.ext_id).where(Episode.plan_id == plan_id).order_by(Episode.seq)
+            )
+        ).all()
+        ep_ids = [row[0] for row in episodes]
+        ep_ext_ids = [row[1] for row in episodes]
+
+        job_rows = (
+            await s.execute(
+                select(Job.id, Job.status).where(
+                    Job.ref_id.in_(ep_ext_ids),
+                    Job.status.in_(("pending", "running")),
+                )
+            )
+        ).all() if ep_ext_ids else []
+
+        cancelled_job_ids = [row[0] for row in job_rows]
+        running_job_ids = [row[0] for row in job_rows if row[1] == "running"]
+
+        await s.execute(update(Plan).where(Plan.id == plan_id).values(status="cancelled"))
+
+        if ep_ext_ids:
+            await s.execute(
+                update(Job)
+                .where(Job.ref_id.in_(ep_ext_ids), Job.status.in_(("pending", "running")))
+                .values(status="cancelled", error="plan deleted", updated_at=now)
+            )
+            await s.execute(
+                update(Episode)
+                .where(Episode.plan_id == plan_id)
+                .values(status="cancelled")
+            )
+
+        await s.commit()
+        return PlanDeletionFence(
+            plan_id=plan.id,
+            plan_ext_id=plan.ext_id,
+            topic_id=plan.topic_id,
+            episode_ids=ep_ids,
+            episode_ext_ids=ep_ext_ids,
+            cancelled_job_ids=cancelled_job_ids,
+            running_job_ids=running_job_ids,
+        )
+
+
+async def cancel_plan_jobs(plan_ext_id: str) -> int:
+    """兼容只取消 pending job 的旧辅助,实际删除统一走 fence_plan_for_deletion。"""
     now = datetime.now().isoformat(sep=" ", timespec="seconds")
     async with session() as s:
         plan_id = await s.scalar(select(Plan.id).where(Plan.ext_id == plan_ext_id))

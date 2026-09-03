@@ -86,3 +86,31 @@ def write_human_qc(ep_ext_id: str, passed: bool, notes: str = "") -> dict:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), "utf-8")
     return meta["human_qc"]
+
+
+def delete_plan_artifacts(plan_ext_id: str, ep_ext_ids: list[str]) -> None:
+    """幂等删除计划及下属单集全部生成与临时产物(跨集共享文件不删)。"""
+    import shutil
+
+    # 1. 计划元信息
+    settings.plan_path(plan_ext_id).unlink(missing_ok=True)
+
+    # 2. 逐集产物
+    for ep_id in ep_ext_ids:
+        for file_path in (
+            settings.script_path(ep_id),
+            settings.tts_path(ep_id),
+            settings.meta_path(ep_id),
+            settings.episode_audio_path(ep_id),
+            _errata_path(ep_id),
+            Path(f"{settings.script_path(ep_id)}.bak"),
+            Path(f"{settings.tts_path(ep_id)}.bak"),
+            Path(f"{settings.meta_path(ep_id)}.bak"),
+            Path(f"{settings.episode_audio_path(ep_id)}.bak"),
+            settings.episode_audio_path(ep_id).with_suffix(".part.mp3"),
+            settings.episode_audio_path(ep_id).with_suffix(".concat.txt"),
+            settings.episode_audio_path(ep_id).with_suffix(".ffmetadata.txt"),
+            settings.episode_audio_path(ep_id).with_suffix(".joined.mp3"),
+        ):
+            file_path.unlink(missing_ok=True)
+        shutil.rmtree(settings.chunks_dir(ep_id), ignore_errors=True)

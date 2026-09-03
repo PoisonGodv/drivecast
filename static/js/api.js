@@ -60,12 +60,9 @@ export const api = {
 
   getPlan: (id) => request(`/api/plans/${id}`),
 
-  // 计划取消/恢复:取消清 pending job、未完成集标 cancelled;恢复重新入队
-  cancelPlan: (id) =>
-    request(`/api/plans/${id}/cancel`, { method: 'POST' }),
-
-  activatePlan: (id) =>
-    request(`/api/plans/${id}/activate`, { method: 'POST' }),
+  // 永久删除计划:停止运行中任务、清理所有音频/脚本/题库/文件
+  deletePlan: (id) =>
+    request(`/api/plans/${id}`, { method: 'DELETE' }),
 
   // 单集生成与重试
   generateEpisode: (id) =>

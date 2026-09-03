@@ -6,10 +6,10 @@
  */
 
 import { createApp, reactive } from '../vendor/petite-vue.js'
-import { api, connectPlanEvents } from './api.js'
-import { player, loadEpisode, togglePlay, seek, seekToRatio, cycleRate, toggleTranscript, formatTime } from './player.js'
-import { store } from './store.js'
-import { useReview, isDue, formatDate, masteryLabels, directionNames } from './review.js'
+import { api, connectPlanEvents } from './api.js?v=20260903-del'
+import { player, loadEpisode, togglePlay, seek, seekToRatio, cycleRate, toggleTranscript, formatTime } from './player.js?v=20260903-del'
+import { store } from './store.js?v=20260903-del'
+import { useReview, isDue, formatDate, masteryLabels, directionNames } from './review.js?v=20260903-del'
 
 const DIRECTIONS = [
   { key: 'backend_arch', label: '后端/架构面试' },
@@ -44,6 +44,7 @@ const appState = reactive({
   plans: [],
   plansLoading: false,
   todayDueCount: 0,
+  deletingPlanId: null,
 
   // 创建
   createForm: {
@@ -78,10 +79,6 @@ const appState = reactive({
     return this.plans
       .filter((p) => p.status === 'active' || p.status === 'draft')
       .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
-  },
-
-  get cancelledPlans() {
-    return this.plans.filter((p) => p.status === 'cancelled')
   },
 
   planStatusLabel(plan) {
@@ -270,33 +267,33 @@ const appState = reactive({
     }
   },
 
-  /* 取消计划:停掉后续生成(清 pending job),已就绪的集保留可听 */
-  async cancelPlan(plan) {
-    if (!window.confirm(`取消计划「${plan.title}」?\n已生成的集会保留,未完成的集将标记为已取消。`)) return
+  /* 永久删除计划:停止执行中任务,彻底删除全部脚本/音频/题库与文件 */
+  async deletePlan(plan) {
+    const ok = window.confirm(
+      `确定永久删除计划「${plan.title}」？\n\n警告：将立即停止当前任务，并彻底删除该计划的全部脚本、音频、自测题、复习重听与播放进度，不可恢复！`
+    )
+    if (!ok) return
+    this.deletingPlanId = plan.id
     try {
-      const res = await api.cancelPlan(plan.id)
-      this.showToast(`已取消,停止 ${res.cancelled_jobs} 个生成任务`)
+      await api.deletePlan(plan.id)
+      this.showToast('计划及全部内容已永久删除')
       if (this.plan && String(this.plan.id) === String(plan.id)) {
-        this.plan.status = 'cancelled'
-        await this.loadPlan(plan.id)
+        if (this.sse) {
+          this.sse.close()
+          this.sse = null
+        }
+        this.plan = null
+        this.go('/')
       }
-      if (this.route === 'home') await this.loadPlans()
+      if (this.player.planId && String(this.player.planId) === String(plan.id)) {
+        this.player.episodeId = null
+        this.player.planId = null
+      }
+      await this.loadPlans()
     } catch (err) {
       this.showToast(err.message)
-    }
-  },
-
-  /* 恢复计划:cancelled 集回 pending 并重新入队未完成部分 */
-  async activatePlan(plan) {
-    try {
-      await api.activatePlan(plan.id)
-      this.showToast('已恢复,重新开始生成')
-      if (this.plan && String(this.plan.id) === String(plan.id)) {
-        await this.loadPlan(plan.id)
-      }
-      if (this.route === 'home') await this.loadPlans()
-    } catch (err) {
-      this.showToast(err.message)
+    } finally {
+      this.deletingPlanId = null
     }
   },
 

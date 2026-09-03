@@ -217,6 +217,7 @@ sudo systemctl start drivecast
 | 某集生成失败 | Web 计划详情页该行"重试"，或 `POST /api/episodes/{id}/generate` |
 | 整夜批量生成 | 建计划后放任即可，job 表持久化，进程重启自动续跑（running→pending 重入队） |
 | edge-tts 偶发限流 | 已内置串行 + 指数退避，无需干预；持续 429/403 检查出站网络是否被墙 |
+| 计划删除安全约束 | 删除依赖 `run.py` 单进程架构中止正在运行的任务；**严禁**在外置 CLI worker 消费时从 Web 执行删除 |
 | 磁盘清理 | `data/audio/chunks/` 是中间产物，成品在 `data/audio/episodes/`，确认成品完好后可清 chunks |
 
 ## 10. 常见故障
