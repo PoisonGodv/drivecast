@@ -6,11 +6,12 @@ worker 串行消费天然防 edge-tts 限流(docs/03 §3.3)。
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from ..db import session
-from ..models import Job
+from ..models import Episode, Job, Plan
 
 
 async def enqueue(kind: str, ep_ext_id: str, payload: dict) -> int:
@@ -28,6 +29,33 @@ async def enqueue(kind: str, ep_ext_id: str, payload: dict) -> int:
         s.add(job)
         await s.commit()
         return job.id
+
+
+async def cancel_plan_jobs(plan_ext_id: str) -> int:
+    """取消计划:把该计划所有 pending job 标 cancelled。
+
+    running job 无法原地中止——worker 执行前与 script→tts 链式入队前都会
+    再查 plan 状态,running 的自然终止于 cancelled,不会续跑下一环。
+    返回被取消的 job 数。
+    """
+    now = datetime.now().isoformat(sep=" ", timespec="seconds")
+    async with session() as s:
+        plan_id = await s.scalar(select(Plan.id).where(Plan.ext_id == plan_ext_id))
+        if plan_id is None:
+            return 0
+        ep_ext_ids = (
+            (await s.execute(select(Episode.ext_id).where(Episode.plan_id == plan_id)))
+            .scalars().all()
+        )
+        if not ep_ext_ids:
+            return 0
+        result = await s.execute(
+            update(Job)
+            .where(Job.ref_id.in_(ep_ext_ids), Job.status == "pending")
+            .values(status="cancelled", error="plan cancelled", updated_at=now)
+        )
+        await s.commit()
+        return result.rowcount
 
 
 async def enqueue_episode(plan_id: str, seq: int, ep_ext_id: str) -> int:

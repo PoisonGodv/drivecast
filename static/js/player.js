@@ -120,6 +120,9 @@ function stopProgressTimer() {
 function play() {
   if (!player.state.episodeId) return
   audio.play().catch((err) => {
+    // 无手势自动播放被浏览器策略拒绝(NotAllowedError)不是故障:
+    // 页面已就绪,用户点 ▶ 即可,不该显示吓人的"播放失败"。
+    if (err && (err.name === 'NotAllowedError' || err.name === 'AbortError')) return
     player.state.error = `播放失败：${err.message}`
   })
 }
@@ -287,13 +290,18 @@ export async function loadEpisode(episodeId, plan) {
   player.state.sizeBytes = 0
 
   const saved = store.getPosition(String(episodeId))
-  const start = ep.position_sec || saved || 0
+  let start = Number(ep.position_sec) || saved || 0
+  // 历史脏数据可能 position >= duration(旧版上报未钳制):直接顶到末尾会
+  // metadata 加载完立即触发 ended 秒跳下一集,表现为"点了一下就跳走"。已听完的集从头播。
+  const epDuration = Number(ep.duration_sec) || 0
+  if (epDuration > 0 && start >= epDuration - 1) start = 0
+  start = Math.max(0, start)
 
   audio.src = `/api/episodes/${episodeId}/audio`
   audio.playbackRate = player.state.playbackRate
   audio.currentTime = start
   player.state.currentTime = start
-  player.state.duration = ep.duration_sec || 0
+  player.state.duration = epDuration
 
   setMediaMetadata()
   updateMediaSessionPosition()

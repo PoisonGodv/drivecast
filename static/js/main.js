@@ -25,6 +25,14 @@ const STATUS_LABELS = {
   synth_partial: '合成中',
   ready: '可播放',
   failed: '失败',
+  cancelled: '已取消',
+}
+
+const PLAN_STATUS_LABELS = {
+  draft: '草稿',
+  active: '进行中',
+  done: '已完成',
+  cancelled: '已取消',
 }
 
 const appState = reactive({
@@ -61,6 +69,7 @@ const appState = reactive({
   // 常量/映射（模板中可直接用）
   DIRECTIONS,
   STATUS_LABELS,
+  PLAN_STATUS_LABELS,
   masteryLabels,
   directionNames,
 
@@ -69,6 +78,14 @@ const appState = reactive({
     return this.plans
       .filter((p) => p.status === 'active' || p.status === 'draft')
       .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
+  },
+
+  get cancelledPlans() {
+    return this.plans.filter((p) => p.status === 'cancelled')
+  },
+
+  planStatusLabel(plan) {
+    return PLAN_STATUS_LABELS[plan?.status] || plan?.status || '进行中'
   },
 
   get hasActivePlayer() {
@@ -248,6 +265,36 @@ const appState = reactive({
     try {
       await api.generateEpisode(id)
       this.showToast('已加入生成队列')
+    } catch (err) {
+      this.showToast(err.message)
+    }
+  },
+
+  /* 取消计划:停掉后续生成(清 pending job),已就绪的集保留可听 */
+  async cancelPlan(plan) {
+    if (!window.confirm(`取消计划「${plan.title}」?\n已生成的集会保留,未完成的集将标记为已取消。`)) return
+    try {
+      const res = await api.cancelPlan(plan.id)
+      this.showToast(`已取消,停止 ${res.cancelled_jobs} 个生成任务`)
+      if (this.plan && String(this.plan.id) === String(plan.id)) {
+        this.plan.status = 'cancelled'
+        await this.loadPlan(plan.id)
+      }
+      if (this.route === 'home') await this.loadPlans()
+    } catch (err) {
+      this.showToast(err.message)
+    }
+  },
+
+  /* 恢复计划:cancelled 集回 pending 并重新入队未完成部分 */
+  async activatePlan(plan) {
+    try {
+      await api.activatePlan(plan.id)
+      this.showToast('已恢复,重新开始生成')
+      if (this.plan && String(this.plan.id) === String(plan.id)) {
+        await this.loadPlan(plan.id)
+      }
+      if (this.route === 'home') await this.loadPlans()
     } catch (err) {
       this.showToast(err.message)
     }

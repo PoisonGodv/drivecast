@@ -24,6 +24,9 @@ def get_engine() -> AsyncEngine:
             cur = dbapi_conn.cursor()
             cur.execute("PRAGMA journal_mode=WAL")
             cur.execute("PRAGMA foreign_keys=ON")
+            # busy_timeout: WAL 下写冲突默认直接抛 OperationalError(database is locked),
+            # 会穿透 worker 循环杀死消费 task;5s 等锁足够覆盖同进程短事务(docs/06 §10)。
+            cur.execute("PRAGMA busy_timeout=5000")
             cur.close()
 
         _session = async_sessionmaker(_engine, expire_on_commit=False)

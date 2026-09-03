@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     sse_poll_interval_sec: float = 2.0
     worker_poll_interval_sec: float = 1.0
     worker_enabled: bool = True                 # 验收/维护时用 WORKER_ENABLED=false 关闭消费
+    worker_stale_running_sec: int = 3600        # running 超过该时长视为孤儿,空轮询时复位 pending
 
     # ---- 路径 ----
     data_dir: Path = PROJECT_ROOT / "data"

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+import traceback
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -23,11 +25,17 @@ async def lifespan(app: FastAPI):
     await init_db()
 
     # 维护/验收可通过 WORKER_ENABLED=false 禁止消费昂贵任务。
-    _worker_task = (
-        asyncio.create_task(worker.run_forever())
-        if settings.worker_enabled
-        else None
-    )
+    if settings.worker_enabled:
+        _worker_task = asyncio.create_task(worker.run_forever())
+
+        def _log_worker_dead(task: asyncio.Task) -> None:
+            # run_forever 自带异常兜底,正常情况下到不了这里;
+            # 真到这说明消费循环彻底退出——job 将无人消费(UI 停留"排队中"),必须打出来。
+            if not task.cancelled() and task.exception() is not None:
+                print("[worker] 常驻消费 task 已死亡,队列将不再被消费!", file=sys.stderr)
+                traceback.print_exception(task.exception())
+
+        _worker_task.add_done_callback(_log_worker_dead)
 
     yield
 

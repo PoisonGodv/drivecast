@@ -60,6 +60,13 @@ export const api = {
 
   getPlan: (id) => request(`/api/plans/${id}`),
 
+  // 计划取消/恢复:取消清 pending job、未完成集标 cancelled;恢复重新入队
+  cancelPlan: (id) =>
+    request(`/api/plans/${id}/cancel`, { method: 'POST' }),
+
+  activatePlan: (id) =>
+    request(`/api/plans/${id}/activate`, { method: 'POST' }),
+
   // 单集生成与重试
   generateEpisode: (id) =>
     request(`/api/episodes/${id}/generate`, { method: 'POST' }),

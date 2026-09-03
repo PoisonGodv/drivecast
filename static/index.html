@@ -52,9 +52,31 @@
             <button @click="continuePlan(plan)" class="btn btn-primary btn-lg btn-block">
               {{ planProgress(plan).ready > 0 ? '继续听' : '查看进度' }}
             </button>
+            <button
+              @click="cancelPlan(plan)"
+              class="btn btn-ghost btn-block"
+              style="margin-top: 8px; color: var(--error);"
+            >取消计划</button>
           </div>
           <div style="text-align:center; margin-top: 16px;">
             <a href="#/create" class="btn btn-ghost">+ 新建计划</a>
+          </div>
+          <div v-if="cancelledPlans.length" style="margin-top: 32px;">
+            <div class="card-meta" style="margin-bottom: 8px;">已取消的计划</div>
+            <div
+              v-for="plan in cancelledPlans"
+              :key="plan.id"
+              class="card plan-card"
+              style="opacity: 0.65;"
+            >
+              <div>
+                <div class="card-title">{{ plan.title }}</div>
+                <div class="card-meta">
+                  {{ planProgress(plan).ready }}/{{ planProgress(plan).total }} 集已就绪 · 已取消
+                </div>
+              </div>
+              <button @click="activatePlan(plan)" class="btn btn-ghost btn-block">恢复计划</button>
+            </div>
           </div>
         </div>
       </section>
@@ -127,7 +149,14 @@
         <div v-else-if="plan">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; gap: 12px;">
             <h1 class="page-title" style="margin-bottom: 8px;">{{ plan.title }}</h1>
-            <span class="badge" :class="'badge-' + (plan.status || 'draft')">{{ plan.status || 'draft' }}</span>
+            <span class="badge" :class="'badge-' + (plan.status || 'draft')">{{ planStatusLabel(plan) }}</span>
+          </div>
+          <div v-if="plan.status === 'cancelled'" class="card-meta" style="margin-bottom: 8px;">
+            计划已取消,已生成的集仍可播放
+            <button @click="activatePlan(plan)" class="btn" style="margin-left: 8px;">恢复计划</button>
+          </div>
+          <div v-else style="margin-bottom: 8px;">
+            <button @click="cancelPlan(plan)" class="btn btn-ghost" style="color: var(--error);">取消计划</button>
           </div>
           <div class="card-meta" style="margin-bottom: 8px;">
             {{ planProgress(plan).ready }}/{{ planProgress(plan).total }} 集已就绪

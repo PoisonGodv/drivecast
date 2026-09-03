@@ -293,6 +293,17 @@ async def _audio_record(episode_id: int) -> tuple[Episode, AudioRecord, Path]:
     )
     path = Path(audio.file_path)
     if not path.is_file():
+        # DB 存的是生成那台机器的绝对路径;rsync 迁移到服务器后路径失配(docs/06 §7),
+        # 按 ext_id 在本机重算(与 _load_meta 对齐),命中则回写 DB 自愈。
+        fallback = settings.episode_audio_path(episode.ext_id)
+        if fallback.is_file():
+            async with session() as s:
+                await s.execute(
+                    text("UPDATE audio SET file_path = :p WHERE episode_id = :id"),
+                    {"p": str(fallback), "id": episode_id},
+                )
+                await s.commit()
+            return episode, audio, fallback
         raise HTTPException(status_code=404, detail={"code": 404, "message": "audio file missing"})
     return episode, audio, path
 
@@ -354,10 +365,18 @@ async def report_progress(episode_id: int, body: ProgressUpdate) -> dict:
         ).mappings().first()
         duration = int(audio_row["duration_sec"] or 0) if audio_row else 0
 
-        ep.position_sec = body.position_sec
-        if duration and body.position_sec >= duration:
+        # 钳到 [0, duration):进度条抖动/seek 事件序错会上报 >= 时长的值,
+        # 下一场播放 currentTime 被顶到末尾立即触发 ended,表现为"秒跳下一集"。
+        # "听完"仍按原始上报判定,只有落库的续播位置被钳回。
+        position = max(0, body.position_sec)
+        finished = bool(duration) and position >= duration
+        if duration > 0:
+            position = min(position, max(0, duration - 1))
+
+        ep.position_sec = position
+        if finished:
             ep.listen_status = "done"
-        elif body.position_sec > 0:
+        elif position > 0:
             ep.listen_status = "listening"
         await s.commit()
         return {

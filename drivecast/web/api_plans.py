@@ -15,7 +15,7 @@ from ..jobs import pipeline
 from ..library import artifacts
 from ..library import service as library_service
 from ..models import Job, Plan, Script, Topic
-from ..persist import set_episode_status
+from ..persist import set_episode_status, set_plan_episodes_status, set_plan_status
 from ..planner import service as planner
 from ..scriptwriter import service as scriptwriter
 
@@ -48,6 +48,13 @@ class PlanGenerateOut(BaseModel):
     job_id: int | None
     status: str
     job_ids: list[int]
+
+
+class PlanCancelOut(BaseModel):
+    plan_id: int
+    status: str
+    cancelled_jobs: int
+    cancelled_episodes: int
 
 
 class EpisodeGenerateOut(BaseModel):
@@ -152,6 +159,72 @@ async def get_plan(plan_id: int) -> dict:
     return detail
 
 
+@router.post("/plans/{plan_id}/cancel", response_model=PlanCancelOut)
+async def cancel_plan(plan_id: int) -> dict:
+    """取消计划:状态 → cancelled,清 pending job,未完成集标 cancelled。
+
+    已就绪(ready)的集与音频保留,可继续播放;重新 activate 可恢复生成。
+    """
+    plan_row = await library_service.get_plan_by_id(plan_id)
+    if plan_row is None:
+        raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
+    if plan_row.status == "cancelled":
+        # 幂等:重复取消直接返回当前状态
+        return {"plan_id": plan_id, "status": "cancelled", "cancelled_jobs": 0, "cancelled_episodes": 0}
+
+    await set_plan_status(plan_id, "cancelled")
+    cancelled_jobs = await pipeline.cancel_plan_jobs(plan_row.ext_id)
+    cancelled_eps = await set_plan_episodes_status(
+        plan_id,
+        from_statuses=("pending", "scripted", "tts_ready", "synth_partial"),
+        status="cancelled",
+    )
+    return {
+        "plan_id": plan_id,
+        "status": "cancelled",
+        "cancelled_jobs": cancelled_jobs,
+        "cancelled_episodes": cancelled_eps,
+    }
+
+
+@router.post("/plans/{plan_id}/activate", response_model=PlanGenerateOut)
+async def activate_plan(plan_id: int) -> dict:
+    """恢复已取消的计划:cancelled 集回 pending,重新入队未完成部分。"""
+    plan_row = await library_service.get_plan_by_id(plan_id)
+    if plan_row is None:
+        raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
+    if plan_row.status != "cancelled":
+        return {"plan_id": plan_id, "job_id": None, "status": plan_row.status, "job_ids": []}
+
+    try:
+        plan_rec = planner.load_plan(plan_row.ext_id)
+    except (OSError, ValueError) as exc:
+        # 计划文件态丢失(如手工清理 data/plans):状态未动,直接报错
+        raise HTTPException(
+            status_code=500,
+            detail={"code": 500, "message": f"plan file unreadable, activate aborted: {exc}"},
+        ) from exc
+    await set_plan_status(plan_id, "active")
+    await set_plan_episodes_status(plan_id, from_statuses=("cancelled",), status="pending")
+    job_ids = await pipeline.enqueue_plan_all(plan_rec)
+    status = "pending" if job_ids else "done"
+    return {
+        "plan_id": plan_id,
+        "job_id": job_ids[0] if job_ids else None,
+        "status": status,
+        "job_ids": job_ids,
+    }
+
+
+async def _reject_cancelled(plan_row) -> None:
+    """取消后的计划不再接受生成请求;需先 activate 恢复。"""
+    if plan_row.status == "cancelled":
+        raise HTTPException(
+            status_code=409,
+            detail={"code": 409, "message": "plan cancelled, activate it first"},
+        )
+
+
 # ---------- episodes / jobs ----------
 
 @router.post("/episodes/{episode_id}/generate", response_model=EpisodeGenerateOut)
@@ -163,6 +236,7 @@ async def generate_episode(episode_id: int) -> dict:
     plan = await library_service.get_plan_by_id(ep.plan_id)
     if plan is None:
         raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
+    await _reject_cancelled(plan)
     job_id = await pipeline.enqueue_episode(plan.ext_id, ep.seq, ep.ext_id)
     return {"episode_id": episode_id, "job_id": job_id, "status": "pending"}
 
@@ -173,6 +247,7 @@ async def generate_plan_all(plan_id: int) -> dict:
     plan_row = await library_service.get_plan_by_id(plan_id)
     if plan_row is None:
         raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
+    await _reject_cancelled(plan_row)
     plan_rec = planner.load_plan(plan_row.ext_id)
     job_ids = await pipeline.enqueue_plan_all(plan_rec)
     status = "pending" if job_ids else "done"
@@ -209,6 +284,7 @@ async def regenerate_episode(episode_id: int, body: RegenerateIn | None = None) 
     plan = await library_service.get_plan_by_id(ep.plan_id)
     if plan is None:
         raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
+    await _reject_cancelled(plan)
 
     reason = (body.reason if body else "").strip()
     if reason:
@@ -257,6 +333,7 @@ _STAGE_PERCENT = {
     "synth_partial": ("tts", "generating", 75),
     "ready": ("done", "ready", 100),
     "failed": ("done", "failed", 0),
+    "cancelled": ("done", "cancelled", 0),
 }
 
 

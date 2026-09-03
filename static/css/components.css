@@ -147,6 +147,12 @@
   color: var(--error);
 }
 
+.badge-cancelled {
+  background: rgba(154, 160, 166, 0.14);
+  color: var(--text-secondary);
+  text-decoration: line-through;
+}
+
 .badge-pulse {
   animation: pulse 1.6s ease-in-out infinite;
 }
