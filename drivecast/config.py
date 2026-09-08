@@ -19,7 +19,10 @@ class Settings(BaseSettings):
     llm_base_url: str = ""
     llm_api_key: str = ""
     llm_model: str = ""
-    llm_timeout: int = 180          # 长脚本输出给足时间
+    # 整次调用 wall-clock 上限。gpt-5.5 级模型长文(4000+ 字)实测 100-500s,
+    # 上限必须显著高于该分布,否则超时不是兜底而是在击杀本会成功的生成。
+    llm_timeout: int = 900
+    llm_idle_timeout: int = 120     # 流式空闲看门狗:N 秒收不到 chunk 才视为连接挂死
     llm_max_retries: int = 3
     reviewer_enabled: bool = True   # 脚本事实审稿(docs/07 §3.1);REVIEWER_ENABLED=false 可关省一次 LLM 调用
 

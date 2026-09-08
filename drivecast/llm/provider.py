@@ -55,6 +55,7 @@ class OpenAICompatProvider:
         self.base_url = base_url or settings.llm_base_url
         self.model = model or settings.llm_model
         self.timeout = timeout or settings.llm_timeout
+        self.idle_timeout = settings.llm_idle_timeout
         if not (self.base_url and (api_key or settings.llm_api_key) and self.model):
             raise RuntimeError("LLM 未配置:请在 .env 设置 LLM_BASE_URL/LLM_API_KEY/LLM_MODEL")
         self._client = openai.AsyncOpenAI(
@@ -71,24 +72,49 @@ class OpenAICompatProvider:
             kwargs["response_format"] = {"type": "json_object"}
 
         async def _call() -> LLMResult:
-            # wall-clock 硬超时:SDK timeout 在网关挂起(Cloudflare 522 类)时可能不触发,
-            # 不加这一层单次 LLM 调用可无限阻塞 worker 队列(docs/06 §10 故障排查)。
             async def _raw() -> LLMResult:
+                # 流式接收 + 空闲看门狗:长文生成真实耗时可达 100-500s,固定 wall-clock
+                # 超时会周期性击杀"慢但活着"的生成(非流式重试再从零开始)。改流式后,
+                # 只有 idle_timeout 秒收不到任何 chunk 才视为连接挂死;整体 wall-clock
+                # 上限由外层 wait_for(timeout=self.timeout) 兜底(docs/06 §10)。
                 try:
-                    resp = await self._client.chat.completions.create(
-                        model=self.model, messages=messages, temperature=temperature, **kwargs
+                    stream = await self._client.chat.completions.create(
+                        model=self.model, messages=messages, temperature=temperature,
+                        stream=True, stream_options={"include_usage": True}, **kwargs,
                     )
                 except openai.BadRequestError as exc:
-                    # provider 不支持 response_format → 降级纯文本重试一次
-                    if json_mode and "response_format" in str(exc):
-                        resp = await self._client.chat.completions.create(
-                            model=self.model, messages=messages, temperature=temperature
+                    text = str(exc)
+                    if json_mode and "response_format" in text:
+                        # provider 不支持 response_format → 降级纯文本重试一次(仍走流式)
+                        stream = await self._client.chat.completions.create(
+                            model=self.model, messages=messages, temperature=temperature,
+                            stream=True,
+                        )
+                    elif "stream_options" in text:
+                        # 网关不认 stream_options → 去掉再开流(usage 拿不到就算 0)
+                        stream = await self._client.chat.completions.create(
+                            model=self.model, messages=messages, temperature=temperature,
+                            stream=True, **kwargs,
                         )
                     else:
                         raise
-                msg = resp.choices[0].message.content or ""
-                usage = resp.usage.total_tokens if resp.usage else 0
-                return LLMResult(content=msg, usage_tokens=usage, model=self.model)
+                parts: list[str] = []
+                usage = 0
+                it = stream.__aiter__()
+                try:
+                    while True:
+                        chunk = await asyncio.wait_for(it.__anext__(), timeout=self.idle_timeout)
+                        if chunk.choices:
+                            delta = chunk.choices[0].delta.content
+                            if delta:
+                                parts.append(delta)
+                        if chunk.usage:
+                            usage = chunk.usage.total_tokens
+                except StopAsyncIteration:
+                    pass
+                finally:
+                    await stream.close()  # AsyncStream.close 是协程;看门狗打断后必须关流防泄漏
+                return LLMResult(content="".join(parts), usage_tokens=usage, model=self.model)
 
             return await asyncio.wait_for(_raw(), timeout=self.timeout)
 

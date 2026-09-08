@@ -259,7 +259,12 @@ async def _execute_one(job: Job) -> None:
     try:
         await child_task
     except asyncio.CancelledError:
-        # child task 被计划删除 API 取消属于正常业务中断,不杀常驻 worker
+        if asyncio.current_task().cancelling() > 0:
+            # worker 自身被取消(Web lifespan 关停 / CLI Ctrl-C):必须向上传播。
+            # 吞掉它会导致 await run_forever() 永不返回,进程关停挂死只能强杀,
+            # 在途 job 变孤儿、20+ 分钟 LLM 产出随强杀作废。
+            raise
+        # child task 被计划删除 API 取消属正常业务中断,不杀常驻 worker
         pass
     finally:
         unregister_running_job(plan_ext_id, job.id, child_task)

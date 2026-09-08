@@ -225,7 +225,7 @@ sudo systemctl start drivecast
 | 症状 | 原因 → 处置 |
 |---|---|
 | 启动即退出，`Address already in use` | 8080 被占：改 `.env` 的 `WEB_PORT` 或释放端口 |
-| 冒烟 LLM 步骤超时 | `LLM_TIMEOUT` 调大（长脚本生成可达 300s）；或换厂商端点 |
+| 冒烟 LLM 步骤超时 | `LLM_TIMEOUT` 调大（长脚本生成实测 100-500s，建议 ≥600）；流式空闲看门狗 `LLM_IDLE_TIMEOUT`（默认 120s）判定连接挂死；或换厂商端点 |
 | 冒烟 edge-tts 步骤失败 | 服务器到微软 TTS 出站不通（常见于国内机房）：配 HTTPS 代理或换出口 |
 | SSE 无推送但页面正常 | 反向代理没关 buffering（§6 方案 2 已含 `proxy_buffering off`） |
 | `sqlite3.OperationalError: database is locked` | 多进程共写同一 DB；确认只有一个 drivecast 实例在跑 |
