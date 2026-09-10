@@ -26,7 +26,9 @@ from drivecast.llm.provider import LLMResult
 from drivecast.models import Episode, Job, Plan, Script, Topic
 from drivecast.planner import service as planner_service
 from drivecast.reviewer import service as reviewer_service
-from drivecast.schemas import EpisodeRec, PlanRec, Question, ScriptOut, ScriptSection
+from drivecast.schemas import (
+    EpisodeRec, PlanRec, Question, QuizSectionOut, ScriptOut, ScriptSection, SectionOut,
+)
 from drivecast.scriptwriter import service as script_service
 from drivecast.scriptwriter.service import ScriptBlockedError
 from drivecast.web.main import app
@@ -51,14 +53,25 @@ def _fake_script_out() -> ScriptOut:
 
 
 class FakeProvider:
-    """截获 LLM 调用,返回预设结构化输出。"""
+    """截获 LLM 调用,返回预设结构化输出。
+
+    scriptwriter 已拆成分段 agent:schema 为 SectionOut/QuizSectionOut 时
+    自动把预设的整集 ScriptOut 折算成单段输出;其余调用原样返回 parsed。
+    """
 
     def __init__(self, parsed: object) -> None:
         self.parsed = parsed
 
     async def complete(self, *, system: str, user: str, schema: type | None = None,
                        temperature: float = 0.7) -> LLMResult:
-        return LLMResult(content="", parsed=self.parsed, usage_tokens=10, model="fake")
+        parsed = self.parsed
+        if isinstance(parsed, ScriptOut) and schema is not None and issubclass(schema, SectionOut):
+            content = "分布式锁与 Redlock 的考点讲解,含原理、问法与答题框架。" * 2
+            if issubclass(schema, QuizSectionOut):
+                parsed = QuizSectionOut(title="易错", content=content, questions=parsed.questions)
+            else:
+                parsed = SectionOut(title="段落", content=content)
+        return LLMResult(content="", parsed=parsed, usage_tokens=10, model="fake")
 
 
 class RaisingProvider:

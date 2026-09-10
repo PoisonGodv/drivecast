@@ -21,7 +21,10 @@ from drivecast.config import settings
 from drivecast.content.loader import get_fact_cards, get_question_bank
 from drivecast.llm.provider import LLMResult
 from drivecast.planner import service as planner_service
-from drivecast.schemas import Direction, EpisodeOutline, EpisodeRec, PlanOut, PlanRec, Question, ScriptOut, ScriptSection, Turn
+from drivecast.schemas import (
+    Direction, EpisodeOutline, EpisodeRec, PlanOut, PlanRec, Question,
+    QuizSectionOut, ScriptOut, ScriptSection, SectionOut, Turn,
+)
 from drivecast.scriptwriter import service as script_service
 
 
@@ -33,8 +36,20 @@ _MIN_COUNTS: dict[str, int] = {
 }
 
 
+def _fake_questions() -> list[Question]:
+    return [
+        Question(qtype="concept", question="c", framework=["a"], difficulty="medium"),
+        Question(qtype="interview", question="i", framework=["b"], difficulty="medium"),
+        Question(qtype="scenario", question="s", framework=["c"], difficulty="medium"),
+    ]
+
+
 class FakeProvider:
-    """截获 LLM 调用,记录 system/user/schema,返回预设结构化输出。"""
+    """截获 LLM 调用,记录 system/user/schema,按请求 schema 返回预设结构化输出。
+
+    脚本生成已拆成分段 agent(每段一次调用,schema 为 SectionOut/QuizSectionOut),
+    其他调用(planner 等)仍返回构造时传入的 parsed。
+    """
 
     def __init__(self, parsed: object) -> None:
         self.calls: list[dict] = []
@@ -42,6 +57,13 @@ class FakeProvider:
 
     async def complete(self, *, system: str, user: str, schema: type | None = None, temperature: float = 0.7) -> LLMResult:
         self.calls.append({"system": system, "user": user, "schema": schema, "temperature": temperature})
+        if schema is not None and issubclass(schema, SectionOut):
+            content = "本段围绕分布式锁与 Redlock 的核心考点展开,讲原理与面试答法。" * 2
+            if issubclass(schema, QuizSectionOut):
+                parsed: object = QuizSectionOut(title="易错", content=content, questions=_fake_questions())
+            else:
+                parsed = SectionOut(title="段落", content=content)
+            return LLMResult(content="", parsed=parsed, usage_tokens=10, model="fake")
         return LLMResult(content="", parsed=self.parsed, usage_tokens=10, model="fake")
 
 
@@ -167,21 +189,7 @@ class ScriptwriterGroundingTest(unittest.IsolatedAsyncioTestCase):
         self.tmp.cleanup()
 
     async def test_scriptwriter_prompt_includes_at_least_two_matched_questions(self) -> None:
-        fake_out = ScriptOut(
-            sections=[
-                ScriptSection(key="S0", title="回顾", content="回顾内容"),
-                ScriptSection(key="S1", title="知识点", content="知识点内容"),
-                ScriptSection(key="S2", title="问法", content="问法内容"),
-                ScriptSection(key="S3", title="框架", content="框架内容"),
-                ScriptSection(key="S4", title="易错", content="易错内容"),
-            ],
-            questions=[
-                Question(qtype="concept", question="c", framework=["a"], difficulty="medium"),
-                Question(qtype="interview", question="i", framework=["b"], difficulty="medium"),
-                Question(qtype="scenario", question="s", framework=["c"], difficulty="medium"),
-            ],
-        )
-        fake = FakeProvider(fake_out)
+        fake = FakeProvider(None)  # 分段 agent 模式下按 schema 自动返回各段输出
 
         plan = PlanRec(
             plan_id="plan_test",
@@ -204,30 +212,24 @@ class ScriptwriterGroundingTest(unittest.IsolatedAsyncioTestCase):
                 data = await script_service.write_script(plan, ep)
 
         self.assertEqual(data["episode_id"], "ep_test_01")
-        # fake 脚本字数过短会触发"修正重出"二次调用,grounding 在每次调用里都在,断言首调即可
-        self.assertGreaterEqual(len(fake.calls), 1)
-        user = fake.calls[0]["user"]
-        self.assertIn("【本集必须覆盖的题库高频问法】", user)
+        # 分段 agent:每段一次调用(S4 用 QuizSectionOut,其余 SectionOut),字数门禁可能触发本段重出
+        section_calls = [c for c in fake.calls
+                         if c["schema"] is not None and issubclass(c["schema"], SectionOut)]
+        self.assertGreaterEqual(len(section_calls), 5, "五段应各至少调用一次")
+        self.assertTrue(any(issubclass(c["schema"], QuizSectionOut) for c in section_calls),
+                        "S4 应使用 QuizSectionOut 顺带产出自测题")
+        self.assertEqual(len(data["questions"]), 3)
+
+        # grounding 只注入 S2 段的 prompt
+        s2_users = [c["user"] for c in section_calls
+                    if "【本集必须覆盖的题库高频问法】" in c["user"]]
+        self.assertTrue(s2_users, "S2 段 prompt 应注入题库高频问法")
         # 主题匹配应命中分布式锁相关题目,至少 2 题
-        matched_count = sum(1 for q in get_question_bank("backend_arch") if q["question"] in user)
+        matched_count = sum(1 for q in get_question_bank("backend_arch") if q["question"] in s2_users[0])
         self.assertGreaterEqual(matched_count, 2, f"S2 prompt 应注入至少 2 道匹配题,实际 {matched_count}")
 
     async def test_scriptwriter_falls_back_to_high_frequency_when_no_topic_match(self) -> None:
-        fake_out = ScriptOut(
-            sections=[
-                ScriptSection(key="S0", title="回顾", content="a"),
-                ScriptSection(key="S1", title="知识点", content="b"),
-                ScriptSection(key="S2", title="问法", content="c"),
-                ScriptSection(key="S3", title="框架", content="d"),
-                ScriptSection(key="S4", title="易错", content="e"),
-            ],
-            questions=[
-                Question(qtype="concept", question="c", framework=["a"], difficulty="medium"),
-                Question(qtype="interview", question="i", framework=["b"], difficulty="medium"),
-                Question(qtype="scenario", question="s", framework=["c"], difficulty="medium"),
-            ],
-        )
-        fake = FakeProvider(fake_out)
+        fake = FakeProvider(None)
 
         plan = PlanRec(
             plan_id="plan_test",
@@ -249,10 +251,11 @@ class ScriptwriterGroundingTest(unittest.IsolatedAsyncioTestCase):
             with patch("drivecast.scriptwriter.service.upsert_script", new=AsyncMock()):
                 await script_service.write_script(plan, ep)
 
-        user = fake.calls[0]["user"]
-        self.assertIn("【本集必须覆盖的题库高频问法】", user)
+        s2_users = [c["user"] for c in fake.calls
+                    if "【本集必须覆盖的题库高频问法】" in c["user"]]
+        self.assertTrue(s2_users, "S2 段 prompt 应注入题库高频问法")
         high_questions = [q for q in get_question_bank("backend_arch") if q["frequency"] == "high"]
-        self.assertIn(high_questions[0]["question"], user)
+        self.assertIn(high_questions[0]["question"], s2_users[0])
 
 
 if __name__ == "__main__":

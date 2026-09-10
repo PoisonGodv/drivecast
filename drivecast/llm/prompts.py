@@ -43,85 +43,99 @@ def planner_user(topic: str, direction: str, episode_count: int) -> str:
 4. 标题要具体到面试题粒度,不要「XX 简介」这种泛泛标题。"""
 
 
-# ---------- scriptwriter(docs/02 §5,五段结构以 docs/01 §3.2 为权威) ----------
+# ---------- scriptwriter 分段 agent(docs/02 §5,五段结构以 docs/01 §3.2 为权威) ----------
+#
+# 不再用一个大 prompt 一次写完整集:每段(S0-S4)一个独立 LLM 调用,单段聚焦保证深度。
+# 编排层(scriptwriter/service.py)负责并行/串行调度、字数预算切分与拼装。
 
-SCRIPTWRITER_SYSTEM = f"""你是资深技术面试官,把单集大纲写成中文通勤播客口播脚本,面试学习导向。
-{AUDIENCE}
-{NO_FLUFF}
-
-【固定五段结构】
-S0 回顾(约1分钟):回顾上集留下的 3 个自测问题并给出参考答案要点。首集没有上集,直接跳过 S0,用 30 秒开场替代(今天讲什么、为什么面试爱考、3 个要点预告)。
-S1 核心知识点(约5分钟):讲透原理——为什么这样设计、关键机制、底层怎么运转,讲 why 不讲 what。
-S2 高频面试问法(约4分钟):2-3 个真实面试问法,由浅到深连环追问,每个标注考察点。
-S3 答题框架(约3分钟):每个问法给一个可复用的「总—分—钩」答题骨架:先一句话结论,再 2-3 个要点,最后留一个追问钩子(主动抛更深的点引导面试官,这是资深岗加分手法),并给一段可照读的示范话术。
-S4 易错点+自测(约2分钟):资深者也常答错的 1-2 个坑;最后留 3 个自测问题。
-
-【口播硬性要求】(违反任何一条都是废稿)
+_SPEECH_RULES = """【口播硬性要求】(违反任何一条都是废稿)
 - 这是要直接喂给语音合成的口播稿:绝对不要出现 markdown 符号(#、*、`、列表符号)、代码块、表情。
-- 绝对不要把「S0」「S1」「开场」「核心知识点」这类段标、小标题写进稿子——五段是内容结构,不是念出来的标题;段与段之间靠自然过渡句衔接。
+- 绝对不要把「S0」「S1」「开场」「核心知识点」这类段标、小标题写进稿子——你只负责其中一段,段名是内容结构,不是念出来的标题。
 - 不要贴裸代码;代码标识符念语义,比如 sync.Mutex 念作「sync 包里的互斥锁」。
 - 术语用通行中文念法,英文缩写保持原样即可(如 QPS、Redis 直接写,由后处理统一处理念法)。
 - 口语化、说人话,像在车里给同行讲课;句子不宜过长。
 - 段与段之间用空行分隔。
-- 字数是硬指标:正文必须落在目标字数的 0.9 到 1.1 倍之间,写不够是事故,超标同样是事故(超了会听不完)。
+- 字数是硬指标:本段正文必须落在目标字数的 0.9 到 1.1 倍之间,写不够是事故,超标同样是事故(超了会听不完)。"""
 
-【输出字段】
-- sections:恰好 5 段,顺序固定为 S0/S1/S2/S3/S4。每段给 key、title、content；title 只作章节元数据,不会被朗读；content 只放自然口播正文且不要复述 title；turns 留空。
-- content_md:留空字符串即可(由系统按 sections 拼装兼容全文)。
-- turns:留空数组即可。
-- knowledge:本集覆盖的知识点名称列表。
-- questions:恰好 3 个自测问题,qtype 分别为 concept(S1 概念记忆)、interview(S2 原题)、scenario(把知识点放进新场景考应用);每题 framework 给「总—分—钩」骨架要点(首条是一句话结论,末条是追问钩子),difficulty 按资深岗标准标。问题必须能用一句话问出、可在脑中组织答案。"""
+# 各段使命:独白式
+_MONOLOGUE_MISSIONS = {
+    "S0": "本段任务:回顾上集留下的 3 个自测问题,逐题给出参考答案要点(每题先一句话结论,再 2-3 个要点)。"
+          "若给定「无,这是第 1 集」,改为约 30 秒开场:今天讲什么、为什么面试爱考、3 个要点预告。",
+    "S1": "本段任务:把本集目标知识点讲透原理——为什么这样设计、关键机制、底层怎么运转,讲 why 不讲 what。"
+          "这是全片核心段,篇幅最长,每个知识点都要落到「面试被连环追问时能答到哪一层」。",
+    "S2": "本段任务:给出 2-3 个真实高频面试问法,由浅到深连环追问,每个问法用一句话点明考察点。"
+          "必须覆盖给定的题库高频问法,可改写题面但保留考点。",
+    "S3": "本段任务:针对给定的面试问法,各给一个可复用的「总—分—钩」答题骨架:先一句话结论,再 2-3 个要点,"
+          "最后留一个追问钩子(主动抛更深的点引导面试官,这是资深岗加分手法),并给一段可照读的示范话术。",
+    "S4": "本段任务:结合已讲内容,点出 1-2 个资深工程师也常答错的坑;最后自然收束,留 3 个自测问题。",
+}
 
+# 各段使命:对话式(host=面试官/追问者,expert=给深度)
+_DIALOGUE_MISSIONS = {
+    "S0": "本段任务:host 把上集 3 个自测题抛出来,expert 逐题给参考要点(先一句话结论再展开)。"
+          "若给定「无,这是第 1 集」,改为约 30 秒开场:今天讲什么、为什么面试爱考、3 个要点预告。",
+    "S1": "本段任务:host 连环追问,expert 把本集目标知识点讲透原理,讲 why 不讲 what。"
+          "这是全片核心段,篇幅最长,每个知识点都要落到「面试被连环追问时能答到哪一层」。",
+    "S2": "本段任务:host 直接扮面试官抛出 2-3 个真实高频问法,由浅到深连环追问,expert 边答边点明考察点。"
+          "必须覆盖给定的题库高频问法,可改写题面但保留考点。",
+    "S3": "本段任务:expert 针对给定的面试问法各给一个「总—分—钩」答题骨架(一句话结论 → 2-3 要点 → 追问钩子)"
+          "并给可照读的示范话术,host 可以复述确认、替听众追问「那线上出事了怎么办」。",
+    "S4": "本段任务:expert 结合已讲内容点 1-2 个资深者也常答错的坑;host 收尾,留 3 个自测问题。",
+}
 
-# ---------- 对话式脚本(docs/01 §3.1 / 03 §2.1,ai_llm/tech_news 默认) ----------
-
-DIALOGUE_SYSTEM = f"""你是资深技术面试官与播客制作人,把单集大纲写成双人对话式中文通勤播客。
-{AUDIENCE}
-{NO_FLUFF}
-
-【角色】
+_DIALOGUE_ROLES = """【角色】
 - host(主持人):扮演「面试官/聪明追问者」,负责抛题、连环追问、抬杠、要举例、替听众问「那线上出事了怎么办」;节奏快,话短。
 - expert(专家):负责给深度——原理、权衡、坑、答题框架;每段回答先给一句话结论再展开。
+对话要像两个人在车里聊技术:host 的话短促,expert 的话可以稍长但也不超过 4-5 句一轮。"""
 
-【内容结构】(融在对话里,不要把结构名说出来)
-S0 回顾:host 把上集 3 个自测题抛出来,expert 给参考要点(首集跳过,改为 30 秒开场:今天讲什么、为什么面试爱考、3 个要点预告)。
-S1 核心知识点:host 追问,expert 讲透原理,讲 why 不讲 what。
-S2 高频面试问法:host 直接扮面试官抛出 2-3 个真实问法,由浅到深连环追问。
-S3 答题框架:expert 给「总—分—钩」骨架(一句话结论 → 2-3 要点 → 追问钩子)并示范话术,host 可以复述确认。
-S4 易错点+自测:expert 点 1-2 个资深者也常答错的坑;host 收尾留 3 个自测问题。
-
-【口播硬性要求】(违反任何一条都是废稿)
-- 喂给语音合成的口播稿:不要 markdown、代码块、表情;不要贴裸代码,代码标识符念语义。
-- 不要把「S0」「核心知识点」这类结构名写进对话。
-- 术语用通行中文念法,英文缩写保持原样(如 QPS、Redis 直接写)。
-- 口语化,像两个人在车里聊技术;host 的话短促,expert 的话可以稍长但也不超过 4-5 句一轮。
-- 字数是硬指标:全部对话加起来必须落在目标字数的 0.9 到 1.1 倍之间。
-
-【输出字段】
-- sections:恰好 5 段,顺序固定为 S0/S1/S2/S3/S4。每段给 key、title、turns；title 只作章节元数据,角色绝对不要把 title 或 key 说出来；content 留空。全部 sections.turns 加起来满足目标字数。
-- turns:留空数组即可(由系统按 sections 拼装兼容轮次)。
-- content_md:留空字符串即可(由系统拼装)。
-- knowledge:本集覆盖的知识点名称列表。
-- questions:恰好 3 个自测题,qtype 分别为 concept、interview、scenario;每题 framework 给「总—分—钩」骨架要点,difficulty 按资深岗标准标。"""
+_QUIZ_FIELD = (
+    "\n- questions:恰好 3 个自测题,qtype 分别为 concept(概念记忆)、interview(本段相关的面试原题)、"
+    "scenario(把知识点放进新场景考应用);每题 framework 给「总—分—钩」骨架要点(首条是一句话结论,末条是追问钩子),"
+    "difficulty 按资深岗标准标。问题必须能用一句话问出、可在脑中组织答案。"
+)
 
 
-def scriptwriter_system(script_format: str) -> str:
-    return DIALOGUE_SYSTEM if script_format == "dialogue" else SCRIPTWRITER_SYSTEM
+def section_system(script_format: str, key: str) -> str:
+    """单段 agent 的 system prompt:角色 + 本段使命 + 口播红线 + 输出字段。"""
+    if script_format == "dialogue":
+        head = "你是资深技术面试官与播客制作人,负责双人对话式中文通勤播客脚本的一个段落,面试学习导向。"
+        missions = _DIALOGUE_MISSIONS
+        output = ("【输出字段】\n- title:本段标题,只作章节元数据,不会被朗读,角色也绝对不要把它说出来。\n"
+                  "- turns:本段对话轮次,speaker 为 host 或 expert,text 为自然口播台词。\n"
+                  "- content:留空字符串。")
+        role = _DIALOGUE_ROLES
+    else:
+        head = "你是资深技术面试官,负责中文通勤播客口播脚本的一个段落,面试学习导向。"
+        missions = _MONOLOGUE_MISSIONS
+        output = ("【输出字段】\n- title:本段标题,只作章节元数据,不会被朗读。\n"
+                  "- content:本段自然口播正文,不要复述 title。\n"
+                  "- turns:留空数组。")
+        role = ""
+    quiz = _QUIZ_FIELD if key == "S4" else ""
+    parts = [head, AUDIENCE, NO_FLUFF, role, missions[key], _SPEECH_RULES, output + quiz]
+    return "\n\n".join(p for p in parts if p)
 
 
-def scriptwriter_user(plan: PlanRec, ep: EpisodeRec, recap_questions: list[str], target_words: int) -> str:
-    recap = "\n".join(f"- {q}" for q in recap_questions) if recap_questions else "(无,这是第 1 集)"
-    return f"""学习计划:「{plan.title}」(方向 {plan.direction},{DIRECTION_NAMES.get(plan.direction, "")})
+def section_user(plan: PlanRec, ep: EpisodeRec, key: str, target_words: int, *,
+                 recap_questions: list[str] | None = None,
+                 s2_grounding: str = "", context: str = "") -> str:
+    """单段 agent 的 user prompt:全集上下文 + 本段专属输入 + 字数预算。"""
+    parts = [f"""学习计划:「{plan.title}」(方向 {plan.direction},{DIRECTION_NAMES.get(plan.direction, "")})
 本集是第 {ep.seq} 集:「{ep.title}」
 本集目标:{ep.goal}
 目标知识点:{", ".join(ep.objectives)}
 大纲:{ep.outline}
-方向侧重:{DIRECTION_HINTS.get(plan.direction, "")}
-
-上集留下的自测问题(S0 要回顾并给参考要点;首集则跳过 S0 用 30 秒开场):
-{recap}
-
-目标字数:正文约 {target_words} 字(对应约 {ep.target_minutes} 分钟车载收听)。写足,不要缩水。"""
+方向侧重:{DIRECTION_HINTS.get(plan.direction, "")}"""]
+    if key == "S0":
+        recap = ("\n".join(f"- {q}" for q in recap_questions)
+                 if recap_questions else "(无,这是第 1 集,写 30 秒开场)")
+        parts.append(f"上集留下的自测问题(逐题回顾并给参考要点):\n{recap}")
+    if s2_grounding:
+        parts.append(s2_grounding)
+    if context:
+        parts.append(f"【已写好的相邻段落,保持衔接与口径一致,不要重复其内容】\n{context}")
+    parts.append(f"本段目标字数:约 {target_words} 字。写足,不要缩水。")
+    return "\n\n".join(parts)
 
 
 def recap_of(ep_questions: list) -> list[str]:

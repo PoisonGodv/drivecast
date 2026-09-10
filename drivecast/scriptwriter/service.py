@@ -1,9 +1,16 @@
 """scriptwriter:单集大纲 → 五段式面试导向脚本,落 data/scripts/{ep}.script.json。
 
 产物契约: docs/01 §3.2(五段)/ §4(题库);M1 文件态,question 随脚本一次产出。
+
+生成方式:不用一个大 prompt 写完整集,而是拆成 5 个分段 agent(每段一次独立 LLM 调用):
+- S0/S1/S2 无相互依赖,并行生成(S2 注入题库高频问法做 grounding);
+- S3 依赖 S2 的问法,串行跟进;
+- S4 依赖 S1/S2 的内容,串行收尾,并顺带产出本集 3 道自测题;
+- 每段独立做字数门禁,不合格只重出该段,不牵连其他段。
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from datetime import datetime, timezone
@@ -14,11 +21,21 @@ from ..content.loader import get_fact_cards, get_question_bank
 from ..llm import prompts
 from ..llm.provider import get_provider
 from ..persist import upsert_script
-from ..schemas import EpisodeRec, PlanRec, Question, ScriptOut
+from ..schemas import (
+    EpisodeRec,
+    PlanRec,
+    Question,
+    QuizSectionOut,
+    ScriptOut,
+    ScriptSection,
+    SectionOut,
+)
 
 _SPEAKER_CN = {"host": "主持人", "expert": "专家"}
 _SECTION_KEYS = ("S0", "S1", "S2", "S3", "S4")
 _SECTION_TITLES = ("回顾与开场", "核心知识点", "高频面试问法", "答题框架", "易错点与自测")
+# 五段时间占比(docs/01 §3.2:1/5/4/3/2 分钟,共 15 分钟),用于把整集字数预算切给各段 agent
+_SECTION_SHARE = {"S0": 1 / 15, "S1": 5 / 15, "S2": 4 / 15, "S3": 3 / 15, "S4": 2 / 15}
 
 
 class ScriptBlockedError(RuntimeError):
@@ -159,33 +176,95 @@ async def _review(data: dict, ep: EpisodeRec, matched: list[dict]) -> dict:
     return result.model_dump()
 
 
-async def _gen(plan: PlanRec, ep: EpisodeRec, target_words: int, extra_note: str = "",
-               s2_questions: list[dict] | None = None) -> ScriptOut:
-    if s2_questions is None:
-        s2_questions = _match_questions(plan, ep)
-    user = prompts.scriptwriter_user(plan, ep, _recap_questions(plan, ep.seq), target_words)
-    s2_grounding = _s2_grounding_prompt(s2_questions)
-    if s2_grounding:
-        user += f"\n\n{s2_grounding}"
+async def _gen_section(plan: PlanRec, ep: EpisodeRec, key: str, target_words: int,
+                       *, recap_questions: list[str] | None = None,
+                       s2_grounding: str = "", context: str = "",
+                       extra_note: str = "") -> tuple[ScriptSection, list[Question], int]:
+    """单段 agent:一次独立 LLM 调用,只写 key 这一段。返回 (section, questions, usage)。"""
+    schema = QuizSectionOut if key == "S4" else SectionOut
+    user = prompts.section_user(plan, ep, key, target_words,
+                                recap_questions=recap_questions,
+                                s2_grounding=s2_grounding, context=context)
     if extra_note:
         user += f"\n\n【修正】{extra_note}"
     result = await get_provider().complete(
-        system=prompts.scriptwriter_system(ep.script_format), user=user,
-        schema=ScriptOut, temperature=0.75,
+        system=prompts.section_system(ep.script_format, key), user=user,
+        schema=schema, temperature=0.75,
     )
-    out: ScriptOut = result.parsed  # type: ignore[assignment]
-    sections = _normalise_sections(out, ep.script_format)
-    if not sections:
-        # 兼容旧 provider/测试桩输出；新生成 prompt 会稳定给 sections。
-        if ep.script_format == "dialogue":
-            if not out.turns:
-                raise ValueError("对话式脚本 turns 为空")
-            out.content_md = "\n\n".join(f"{_SPEAKER_CN[t.speaker]}:{t.text}" for t in out.turns)
-        elif not out.content_md:
-            raise ValueError("独白式脚本 content_md 为空")
-    out.content_md = _strip_labels(out.content_md)
-    out._sections = sections  # type: ignore[attr-defined]
-    out._usage = result.usage_tokens  # type: ignore[attr-defined]
+    out = result.parsed
+    if not isinstance(out, SectionOut):  # 兼容返回整集 ScriptOut 的旧测试桩
+        raise ValueError(f"分段 agent 输出类型不符:期望 {schema.__name__},实际 {type(out).__name__}")
+    section = ScriptSection(key=key, title=out.title, content=out.content, turns=out.turns)
+    questions = out.questions if isinstance(out, QuizSectionOut) else []
+    return section, questions, result.usage_tokens
+
+
+def _section_len(section: ScriptSection, script_format: str) -> int:
+    if script_format == "dialogue":
+        return sum(len(t.text) for t in section.turns)
+    return len(section.content)
+
+
+def _section_plain(section: ScriptSection, script_format: str) -> str:
+    """段的纯文本形态,作为后续段 agent 的衔接上下文。"""
+    if script_format == "dialogue":
+        return "\n".join(f"{_SPEAKER_CN[t.speaker]}:{t.text}" for t in section.turns)
+    return section.content
+
+
+async def _gen_section_checked(plan: PlanRec, ep: EpisodeRec, key: str, target_words: int,
+                               **kwargs) -> tuple[ScriptSection, list[Question], int]:
+    """单段生成 + 门禁:结构为空或字数落在 0.75-1.25 倍区间外,带修正说明只重出本段一次。"""
+    section, questions, usage = await _gen_section(plan, ep, key, target_words, **kwargs)
+    n = _section_len(section, ep.script_format)
+    if n == 0:
+        raise ValueError(f"分段脚本 {key} 内容为空(script_format={ep.script_format})")
+    if not (target_words * 0.75 <= n <= target_words * 1.25):
+        print(f"[script] {ep.episode_id} {key} 字数 {n} 超出目标区间 "
+              f"[{int(target_words * 0.75)}, {int(target_words * 1.25)}],本段修正重出")
+        note = (f"上一次本段正文 {n} 字,不符合要求。请重写本段,严格控制在 "
+                f"{int(target_words * 0.9)} 到 {int(target_words * 1.1)} 字之间,宁精勿滥。")
+        retry, retry_questions, retry_usage = await _gen_section(
+            plan, ep, key, target_words, extra_note=note, **kwargs)
+        usage += retry_usage
+        if _section_len(retry, ep.script_format) > 0:  # 重出为空则保留首版,不至于开天窗
+            section, questions = retry, retry_questions
+    return section, questions, usage
+
+
+async def _gen_sections(plan: PlanRec, ep: EpisodeRec, target_words: int,
+                        s2_questions: list[dict]) -> ScriptOut:
+    """分段 agent 编排:S0/S1/S2 并行 → S3 跟 S2 → S4 跟 S1+S2,拼回整集 ScriptOut。"""
+    targets = {k: max(120, int(target_words * share)) for k, share in _SECTION_SHARE.items()}
+    if ep.seq <= 1:
+        # 首集 S0 是 30 秒开场而非回顾,预算减半,省下的匀给核心段 S1
+        saved = targets["S0"] // 2
+        targets["S0"] -= saved
+        targets["S1"] += saved
+
+    s0, s1, s2 = await asyncio.gather(
+        _gen_section_checked(plan, ep, "S0", targets["S0"],
+                             recap_questions=_recap_questions(plan, ep.seq)),
+        _gen_section_checked(plan, ep, "S1", targets["S1"]),
+        _gen_section_checked(plan, ep, "S2", targets["S2"],
+                             s2_grounding=_s2_grounding_prompt(s2_questions)),
+    )
+    # S3 的答题框架必须对准 S2 抛出的问法;S4 的坑与自测题要扣住 S1/S2 讲过的内容
+    s3 = await _gen_section_checked(plan, ep, "S3", targets["S3"],
+                                    context=_section_plain(s2[0], ep.script_format))
+    s4 = await _gen_section_checked(
+        plan, ep, "S4", targets["S4"],
+        context=_section_plain(s1[0], ep.script_format)
+                + "\n\n" + _section_plain(s2[0], ep.script_format))
+
+    runs = (s0, s1, s2, s3, s4)
+    out = ScriptOut(
+        sections=[run[0] for run in runs],
+        questions=s4[1],  # 自测题由 S4 agent 随段产出
+        knowledge=list(ep.objectives),
+    )
+    out._sections = _normalise_sections(out, ep.script_format)  # type: ignore[attr-defined]
+    out._usage = sum(run[2] for run in runs)  # type: ignore[attr-defined]
     return out
 
 
@@ -197,17 +276,9 @@ async def write_script(plan: PlanRec, ep: EpisodeRec, *, force: bool = False) ->
 
     target_words = ep.target_minutes * settings.words_per_minute
     matched = _match_questions(plan, ep)  # grounding 与审稿选卡共用一次匹配
-    out = await _gen(plan, ep, target_words, s2_questions=matched)
+    out = await _gen_sections(plan, ep, target_words, matched)
 
-    # 长度门禁:落在 0.75-1.25 倍区间外,带修正说明重出一次
-    n = len(out.content_md)
-    if not (target_words * 0.75 <= n <= target_words * 1.25):
-        print(f"[script] 字数 {n} 超出目标区间 [{int(target_words * 0.75)}, {int(target_words * 1.25)}],修正重出")
-        out = await _gen(plan, ep, target_words,
-                         f"上一次正文 {n} 字,不符合要求。请重写,严格控制在 {int(target_words * 0.9)} 到 {int(target_words * 1.1)} 字之间,宁精勿滥。",
-                         s2_questions=matched)
-
-    # 质量校验:五段内容长度 + 恰好 3 道自测题(docs/02 §6 输出校验)
+    # 质量校验:整集字数明显缩水时告警(分段门禁已在各段内做过一轮修正重出)
     n_chars = len(out.content_md)
     if n_chars < target_words * 0.6:
         print(f"[warn] {ep.episode_id} 脚本报备字数 {target_words},实际只有 {n_chars} 字,内容可能缩水")

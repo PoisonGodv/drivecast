@@ -64,6 +64,22 @@ class ScriptSection(BaseModel):
     turns: list[Turn] = Field(default_factory=list)
 
 
+# ---------- 分段 agent 输出(scriptwriter 每段一次独立 LLM 调用) ----------
+
+class SectionOut(BaseModel):
+    """单段 agent 的输出:只写自己那一段,key 由编排层指定,不让 LLM 填。"""
+
+    title: str = ""
+    content: str = ""                            # monologue 用
+    turns: list[Turn] = Field(default_factory=list)  # dialogue 用
+
+
+class QuizSectionOut(SectionOut):
+    """S4 段 agent 的输出:除本段正文外,顺带产出本集 3 道自测题。"""
+
+    questions: list[Question] = Field(default_factory=list)
+
+
 class ScriptOut(BaseModel):
     """五段式脚本(docs/01 §3.2):S0 回顾→S1 知识点→S2 问法→S3 框架→S4 易错+自测。
 
