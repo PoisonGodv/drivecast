@@ -35,14 +35,31 @@ def _grounding_prompt(direction: str) -> str:
     return "\n".join(lines)
 
 
-def _new_plan_id() -> str:
-    """plan_YYYYMMDD_NN,NN 为当日序号。"""
+async def new_plan_id() -> str:
+    """plan_YYYYMMDD_NN,NN 为当日序号(DB 占位行与文件取较大值,防同日并发重号)。
+
+    Web 创建改为异步后,接口先落 generating 占位 Plan 行、文件要等 worker 调完
+    大模型才写;只数文件会在同日二次创建时撞号,所以以 DB 计数为准、文件兜底。
+    """
     today = datetime.now().strftime("%Y%m%d")
-    seq = 1
+    file_count = 0
     plans_dir = settings.data_dir / "plans"
     if plans_dir.exists():
-        seq += sum(1 for p in plans_dir.glob(f"plan_{today}_*.json"))
-    return f"plan_{today}_{seq:02d}"
+        file_count = sum(1 for p in plans_dir.glob(f"plan_{today}_*.json"))
+    db_count = 0
+    try:
+        from sqlalchemy import func, select
+
+        from ..db import session
+        from ..models import Plan
+
+        async with session() as s:
+            db_count = await s.scalar(
+                select(func.count(Plan.id)).where(Plan.ext_id.like(f"plan_{today}_%"))
+            ) or 0
+    except Exception:  # 纯文件态运行(单测/未建表)退化为文件计数
+        db_count = 0
+    return f"plan_{today}_{max(file_count, db_count) + 1:02d}"
 
 
 def load_plan(plan_id: str) -> PlanRec:
@@ -61,6 +78,7 @@ async def create_plan(
     direction: Direction = "backend_arch",
     episode_count: int | None = None,
     target_minutes: int | None = None,
+    plan_id: str | None = None,
 ) -> PlanRec:
     count = episode_count or settings.default_episode_count
     minutes = target_minutes or settings.target_minutes
@@ -78,7 +96,8 @@ async def create_plan(
     )
     out: PlanOut = result.parsed  # type: ignore[assignment]
 
-    plan_id = _new_plan_id()
+    # Web 异步创建由接口预分配 plan_id(占位行 ext_id);CLI 缺省现场分配
+    plan_id = plan_id or await new_plan_id()
     short = plan_id.removeprefix("plan_")  # 20260820_01
     default_format = "dialogue" if direction in DIALOGUE_DIRECTIONS else "monologue"
     episodes: list[EpisodeRec] = []

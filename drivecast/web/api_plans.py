@@ -8,7 +8,8 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 
 from ..db import session
 from ..jobs import pipeline
@@ -120,31 +121,64 @@ async def create_topic(body: TopicCreate) -> dict:
 
 @router.post("/plans", response_model=PlanGenerateOut, status_code=201)
 async def create_plan(body: PlanCreate) -> dict:
-    """由主题生成学习计划,并入 script job 队列(docs/02 §4 / docs/05 M3)。"""
+    """由主题生成学习计划(docs/02 §4):落 generating 占位 + 入 plan job,立即返回。
+
+    大模型出大纲真实耗时可达数分钟,同步等待会被浏览器/网关超时击杀;
+    大纲由 worker 异步生成,完成后占位行转正 active 并链式入队各集 script job,
+    进度由 SSE 推送(docs/04 §3)。
+    """
     async with session() as s:
         topic = await s.get(Topic, body.topic_id)
         if topic is None:
             raise HTTPException(status_code=404, detail={"code": 404, "message": "topic not found"})
 
-    # 计划大纲生成同步完成(一次 LLM 调用),脚本/音频走 job 异步
-    plan_rec = await planner.create_plan(
-        topic.title, direction=topic.direction, episode_count=body.episode_count,
-        target_minutes=body.target_minutes,
-    )
+        # 服务端幂等兜底:同主题已有生成中的计划直接复用(配合前端防抖)
+        existing = await s.scalar(
+            select(Plan).where(Plan.topic_id == topic.id, Plan.status == "generating")
+        )
 
+    if existing is not None:
+        job_id = await pipeline.enqueue("plan", existing.ext_id, {
+            "plan_id": existing.ext_id,
+            "topic": topic.title,
+            "direction": topic.direction,
+            "episode_count": body.episode_count,
+            "target_minutes": body.target_minutes,
+        })
+        return {"plan_id": existing.id, "job_id": job_id, "status": "pending", "job_ids": [job_id]}
+
+    plan_ext_id = await planner.new_plan_id()
     async with session() as s:
-        plan_row = await s.scalar(select(Plan).where(Plan.ext_id == plan_rec.plan_id))
-        if plan_row is None:
-            raise HTTPException(status_code=500, detail={"code": 500, "message": "plan persist failed"})
+        placeholder = Plan(
+            ext_id=plan_ext_id, topic_id=topic.id, title=topic.title,
+            status="generating", episode_count=0,
+        )
+        s.add(placeholder)
+        try:
+            await s.commit()
+        except IntegrityError:
+            # 并发创建同日序号撞号(ext_id 唯一约束),前端重试即可
+            raise HTTPException(
+                status_code=409, detail={"code": 409, "message": "计划编号冲突,请重试"}
+            )
+        plan_row_id = placeholder.id
 
-    job_ids = await pipeline.enqueue_plan_all(plan_rec)
-    status = "pending" if job_ids else "done"
-    return {
-        "plan_id": plan_row.id,
-        "job_id": job_ids[0] if job_ids else None,
-        "status": status,
-        "job_ids": job_ids,
-    }
+    try:
+        job_id = await pipeline.enqueue("plan", plan_ext_id, {
+            "plan_id": plan_ext_id,
+            "topic": topic.title,
+            "direction": topic.direction,
+            "episode_count": body.episode_count,
+            "target_minutes": body.target_minutes,
+        })
+    except Exception:
+        # 入队失败不能留下无任务的 generating 占位(永久卡住),回滚占位行让前端可重试
+        async with session() as s:
+            await s.execute(delete(Plan).where(Plan.id == plan_row_id, Plan.status == "generating"))
+            await s.commit()
+        raise
+
+    return {"plan_id": plan_row_id, "job_id": job_id, "status": "pending", "job_ids": [job_id]}
 
 
 @router.get("/plans")
@@ -185,6 +219,7 @@ async def delete_plan(plan_id: int) -> dict:
         # 单事务级联删除所有关联数据库记录
         await finalize_plan_deletion(
             fence.plan_id,
+            fence.plan_ext_id,
             fence.topic_id,
             fence.episode_ids,
             fence.episode_ext_ids,

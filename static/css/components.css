@@ -125,7 +125,8 @@
   letter-spacing: 0.02em;
 }
 
-.badge-pending {
+.badge-pending,
+.badge-generating {
   background: rgba(154, 160, 166, 0.18);
   color: var(--text-secondary);
 }

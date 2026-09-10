@@ -25,13 +25,20 @@ async def upsert_plan(plan: PlanRec) -> None:
             await s.flush()
             topic_id = t.id
 
-        plan_id = await s.scalar(select(Plan.id).where(Plan.ext_id == plan.plan_id))
-        if plan_id is None:
+        plan_row = await s.scalar(select(Plan).where(Plan.ext_id == plan.plan_id))
+        if plan_row is None:
             p = Plan(ext_id=plan.plan_id, topic_id=topic_id, title=plan.title,
                      status="active", episode_count=len(plan.episodes))
             s.add(p)
             await s.flush()
             plan_id = p.id
+        else:
+            plan_id = plan_row.id
+            values: dict = {"title": plan.title, "episode_count": len(plan.episodes)}
+            # 异步创建的 generating 占位行在此转正;cancelled 等终态绝不回捞
+            if plan_row.status == "generating":
+                values["status"] = "active"
+            await s.execute(update(Plan).where(Plan.id == plan_id).values(**values))
 
         for ep in plan.episodes:
             exists = await s.scalar(select(Episode.id).where(Episode.ext_id == ep.episode_id))
@@ -131,7 +138,13 @@ async def set_episode_status(ep_ext_id: str, status: str) -> None:
         await s.commit()
 
 
-async def finalize_plan_deletion(plan_id: int, topic_id: int, ep_ids: list[int], ep_ext_ids: list[str]) -> None:
+async def finalize_plan_deletion(
+    plan_id: int,
+    plan_ext_id: str,
+    topic_id: int,
+    ep_ids: list[int],
+    ep_ext_ids: list[str],
+) -> None:
     """单事务级联物理删除 Plan 及所有关联业务与学习数据;孤立 Topic 顺带清理。"""
     from sqlalchemy import delete
     async with session() as s:
@@ -142,9 +155,8 @@ async def finalize_plan_deletion(plan_id: int, topic_id: int, ep_ids: list[int],
             # 2. 生产产物记录
             await s.execute(delete(Audio).where(Audio.episode_id.in_(ep_ids)))
             await s.execute(delete(Script).where(Script.episode_id.in_(ep_ids)))
-        if ep_ext_ids:
-            # 3. 队列表任务
-            await s.execute(delete(Job).where(Job.ref_id.in_(ep_ext_ids)))
+        # 3. 队列表任务(集任务 + 以计划 ext_id 为 ref_id 的大纲生成 plan 任务)
+        await s.execute(delete(Job).where(Job.ref_id.in_([*ep_ext_ids, plan_ext_id])))
         # 4. 集与计划本体
         await s.execute(delete(Episode).where(Episode.plan_id == plan_id))
         await s.execute(delete(Plan).where(Plan.id == plan_id))
@@ -161,6 +173,16 @@ async def set_plan_status(plan_row_id: int, status: str) -> None:
     """计划状态流转(active ↔ cancelled);plan.status 此前写入即冻结,这里补上更新入口。"""
     async with session() as s:
         await s.execute(update(Plan).where(Plan.id == plan_row_id).values(status=status))
+        await s.commit()
+
+
+async def set_plan_status_by_ext(plan_ext_id: str, status: str) -> None:
+    """按 ext_id 更新计划状态(大纲生成失败等终态);cancelled 为终态,不覆盖。"""
+    async with session() as s:
+        await s.execute(
+            update(Plan).where(Plan.ext_id == plan_ext_id, Plan.status != "cancelled")
+            .values(status=status)
+        )
         await s.commit()
 
 

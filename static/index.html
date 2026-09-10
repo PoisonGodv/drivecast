@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#0f1115">
   <title>DriveCast</title>
-  <link rel="stylesheet" href="/static/css/base.css?v=20260903-del">
-  <link rel="stylesheet" href="/static/css/components.css?v=20260903-del">
-  <link rel="stylesheet" href="/static/css/review.css?v=20260903-del">
+  <link rel="stylesheet" href="/static/css/base.css?v=20260910-async">
+  <link rel="stylesheet" href="/static/css/components.css?v=20260910-async">
+  <link rel="stylesheet" href="/static/css/review.css?v=20260910-async">
 </head>
 <body>
   <div id="app">
@@ -37,9 +37,11 @@
             <div>
               <div class="card-title">{{ plan.title }}</div>
               <div class="card-meta">
-                {{ planProgress(plan).ready }}/{{ planProgress(plan).total }} 集已就绪
+                <template v-if="plan.status === 'generating'">大纲生成中，通常需要 1~5 分钟</template>
+                <template v-else-if="plan.status === 'failed'">大纲生成失败，可删除后重新创建</template>
+                <template v-else>{{ planProgress(plan).ready }}/{{ planProgress(plan).total }} 集已就绪
                 · 已听 {{ listenedCount(plan) }} 集
-                · 今日待复习 {{ todayDueCount }} 题
+                · 今日待复习 {{ todayDueCount }} 题</template>
               </div>
             </div>
             <div class="progress-bar">
@@ -152,6 +154,13 @@
               :class="{ success: planProgress(plan).percent === 100 }"
               :style="{ width: planProgress(plan).percent + '%' }"
             ></div>
+          </div>
+
+          <div v-if="plan.status === 'generating'" class="empty-state">
+            <p>正在生成大纲与分集…大模型生成通常需要 1~5 分钟，本页会自动更新。</p>
+          </div>
+          <div v-else-if="plan.status === 'failed'" class="empty-state">
+            <p>大纲生成失败，可删除本计划后重新创建。</p>
           </div>
 
           <div class="episode-list">
@@ -653,6 +662,6 @@
     <div class="toast" :class="{ show: toast }">{{ toast }}</div>
   </div>
 
-  <script type="module" src="/static/js/main.js?v=20260903-del"></script>
+  <script type="module" src="/static/js/main.js?v=20260910-async"></script>
 </body>
 </html>

@@ -6,10 +6,10 @@
  */
 
 import { createApp, reactive } from '../vendor/petite-vue.js'
-import { api, connectPlanEvents } from './api.js?v=20260903-del'
-import { player, loadEpisode, togglePlay, seek, seekToRatio, cycleRate, toggleTranscript, formatTime } from './player.js?v=20260903-del'
-import { store } from './store.js?v=20260903-del'
-import { useReview, isDue, formatDate, masteryLabels, directionNames } from './review.js?v=20260903-del'
+import { api, connectPlanEvents } from './api.js?v=20260910-async'
+import { player, loadEpisode, togglePlay, seek, seekToRatio, cycleRate, toggleTranscript, formatTime } from './player.js?v=20260910-async'
+import { store } from './store.js?v=20260910-async'
+import { useReview, isDue, formatDate, masteryLabels, directionNames } from './review.js?v=20260910-async'
 
 const DIRECTIONS = [
   { key: 'backend_arch', label: '后端/架构面试' },
@@ -30,8 +30,10 @@ const STATUS_LABELS = {
 
 const PLAN_STATUS_LABELS = {
   draft: '草稿',
+  generating: '大纲生成中',
   active: '进行中',
   done: '已完成',
+  failed: '生成失败',
   cancelled: '已取消',
 }
 
@@ -54,6 +56,7 @@ const appState = reactive({
     targetMinutes: 15,
   },
   creating: false,
+  lastCreateAt: 0,
 
   // 计划详情
   plan: null,
@@ -77,7 +80,7 @@ const appState = reactive({
   /* ---------- getter ---------- */
   get inProgressPlans() {
     return this.plans
-      .filter((p) => p.status === 'active' || p.status === 'draft')
+      .filter((p) => ['active', 'draft', 'generating', 'failed'].includes(p.status))
       .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
   },
 
@@ -195,12 +198,17 @@ const appState = reactive({
       this.showToast('请输入学习主题')
       return
     }
+    // 防抖:请求在途(creating)或 1.5s 内的重复提交一律忽略;
+    // 服务端另有同主题 generating 去重兜底,双击/连点不会产生重复计划
+    const now = Date.now()
+    if (this.creating || now - this.lastCreateAt < 1500) return
+    this.lastCreateAt = now
     this.creating = true
     try {
       const topic = await api.createTopic(title.trim(), direction)
       const plan = await api.createPlan(topic.id, Number(episodeCount), Number(targetMinutes))
       this.createForm.title = ''
-      this.showToast('计划创建成功，正在生成')
+      this.showToast('已加入生成队列，大纲约需 1~5 分钟')
       this.go(`/plan/${plan.plan_id}`)
     } catch (err) {
       this.showToast(err.message)
@@ -220,6 +228,15 @@ const appState = reactive({
       this.planError = err.message
     } finally {
       this.planLoading = false
+    }
+  },
+
+  /* 只刷新详情数据,不重启 SSE(大纲生成完成/状态翻转时由 plan_status 事件触发) */
+  async refreshPlan(id) {
+    try {
+      this.plan = await api.getPlan(id)
+    } catch (err) {
+      console.warn('刷新计划详情失败', err)
     }
   },
 
@@ -256,6 +273,11 @@ const appState = reactive({
   handlePlanStatus(data) {
     if (!this.plan) return
     if (data.all_done != null) this.plan.all_done = data.all_done
+    // 大纲异步生成完成(或失败)时计划状态翻转、集列表从无到有,拉详情刷新
+    const episodeCount = this.plan.episodes?.length || 0
+    if ((data.status && data.status !== this.plan.status) || (data.total || 0) > episodeCount) {
+      this.refreshPlan(data.plan_id)
+    }
   },
 
   async retryEpisode(id) {

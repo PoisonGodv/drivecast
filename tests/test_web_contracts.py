@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -334,6 +335,177 @@ class PlanLifecycleContractsTest(unittest.TestCase):
             self.assertFalse(worker.has_running_job_task("plan_cancel", 999))
 
         asyncio.run(_scenario())
+
+
+class PlanAsyncCreateTest(unittest.TestCase):
+    """创建计划异步化契约:接口只落 generating 占位 + plan job,worker 消费后转正并链式入队。"""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.old_data_dir = settings.data_dir
+        settings.data_dir = Path(self.tmp.name)
+        asyncio.run(db.init_db())
+        asyncio.run(self._seed())
+        self.client = TestClient(app)
+
+    def tearDown(self) -> None:
+        asyncio.run(db.close_db())
+        settings.data_dir = self.old_data_dir
+        self.tmp.cleanup()
+
+    async def _seed(self) -> None:
+        async with db.session() as s:
+            s.add(Topic(title="异步创建", direction="backend_arch"))
+            await s.commit()
+
+    async def _row(self, model, pk: int):
+        async with db.session() as s:
+            return await s.get(model, pk)
+
+    async def _rows(self, model):
+        from sqlalchemy import select
+        async with db.session() as s:
+            return list((await s.execute(select(model))).scalars().all())
+
+    def _create(self) -> dict:
+        res = self.client.post(
+            "/api/plans", json={"topic_id": 1, "episode_count": 4, "target_minutes": 10}
+        )
+        self.assertEqual(res.status_code, 201, res.text)
+        return res.json()
+
+    def test_create_plan_returns_placeholder_and_plan_job_immediately(self) -> None:
+        body = self._create()
+        self.assertEqual(body["plan_id"], 1)
+        self.assertEqual(body["status"], "pending")
+        self.assertEqual(body["job_ids"], [body["job_id"]])
+
+        plan = asyncio.run(self._row(Plan, 1))
+        self.assertEqual(plan.status, "generating")
+        self.assertEqual(plan.episode_count, 0)
+        self.assertTrue(plan.ext_id.startswith("plan_"))
+
+        job = asyncio.run(self._row(Job, body["job_id"]))
+        self.assertEqual(job.kind, "plan")
+        self.assertEqual(job.status, "pending")
+        self.assertEqual(job.ref_id, plan.ext_id)
+        payload = json.loads(job.payload)
+        self.assertEqual(payload["topic"], "异步创建")
+        self.assertEqual(payload["direction"], "backend_arch")
+        self.assertEqual(payload["episode_count"], 4)
+
+        detail = self.client.get("/api/plans/1").json()
+        self.assertEqual(detail["status"], "generating")
+        self.assertEqual(detail["episodes"], [])
+
+        # 重复提交(前端防抖的服务端兜底):generating 期间复用同一计划与在途 job
+        again = self._create()
+        self.assertEqual(again["plan_id"], body["plan_id"])
+        self.assertEqual(again["job_id"], body["job_id"])
+
+    def test_worker_plan_job_generates_outline_and_chains_episode_jobs(self) -> None:
+        from drivecast.jobs import worker
+        from drivecast.llm.provider import LLMResult
+        from drivecast.schemas import EpisodeOutline, PlanOut
+
+        body = self._create()
+        fake_out = PlanOut(
+            title="异步大纲",
+            episodes=[
+                EpisodeOutline(seq=i, title=f"第{i}集", goal="g", objectives=["o"], outline="大纲")
+                for i in (1, 2)
+            ],
+        )
+
+        class _Fake:
+            async def complete(self, **kwargs):
+                return LLMResult(content="", parsed=fake_out)
+
+        async def _run() -> None:
+            job = await worker._next_pending()
+            self.assertIsNotNone(job)
+            await worker._execute_one(job)
+
+        with patch("drivecast.planner.service.get_provider", return_value=_Fake()):
+            asyncio.run(_run())
+
+        plan = asyncio.run(self._row(Plan, 1))
+        self.assertEqual(plan.status, "active")
+        self.assertEqual(plan.title, "异步大纲")
+        self.assertEqual(plan.episode_count, 2)
+        self.assertTrue(settings.plan_path(plan.ext_id).exists())
+
+        episodes = asyncio.run(self._rows(Episode))
+        self.assertEqual(len(episodes), 2)
+
+        job = asyncio.run(self._row(Job, body["job_id"]))
+        self.assertEqual(job.status, "done")
+
+        jobs = asyncio.run(self._rows(Job))
+        script_jobs = [j for j in jobs if j.kind == "script"]
+        self.assertEqual(len(script_jobs), 2)
+        self.assertTrue(all(j.status == "pending" for j in script_jobs))
+
+    def test_delete_generating_plan_fences_plan_job(self) -> None:
+        self._create()
+        res = self.client.delete("/api/plans/1")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "deleted")
+        self.assertEqual(data["cancelled_jobs"], 1)  # plan job 同样被栅栏取消
+        self.assertEqual(data["deleted_episodes"], 0)
+
+        self.assertIsNone(asyncio.run(self._row(Plan, 1)))
+        self.assertEqual(asyncio.run(self._rows(Job)), [])
+        self.assertEqual(self.client.delete("/api/plans/1").status_code, 404)
+
+    def test_plan_job_final_failure_marks_plan_failed(self) -> None:
+        from sqlalchemy import update
+
+        from drivecast.jobs import worker
+
+        body = self._create()
+
+        class _Boom:
+            async def complete(self, **kwargs):
+                raise RuntimeError("LLM down")
+
+        async def _run() -> None:
+            job = await worker._next_pending()
+            self.assertIsNotNone(job)
+            # 直接置为最后一次尝试,走终态分支
+            async with db.session() as s:
+                await s.execute(
+                    update(Job).where(Job.id == job.id).values(attempt=job.max_attempt)
+                )
+                await s.commit()
+            job.attempt = job.max_attempt
+            await worker._execute_one(job)
+
+        with patch("drivecast.planner.service.get_provider", return_value=_Boom()):
+            asyncio.run(_run())
+
+        job = asyncio.run(self._row(Job, body["job_id"]))
+        self.assertEqual(job.status, "failed")
+        plan = asyncio.run(self._row(Plan, 1))
+        self.assertEqual(plan.status, "failed")
+
+    def test_stuck_generating_plan_recovers_to_failed(self) -> None:
+        from sqlalchemy import delete as sql_delete
+
+        from drivecast.jobs import worker
+
+        body = self._create()
+
+        async def _drop_job() -> None:
+            async with db.session() as s:
+                await s.execute(sql_delete(Job).where(Job.id == body["job_id"]))
+                await s.commit()
+
+        asyncio.run(_drop_job())
+        self.assertEqual(asyncio.run(worker._recover_stuck_generating()), 1)
+        plan = asyncio.run(self._row(Plan, 1))
+        self.assertEqual(plan.status, "failed")
 
 
 if __name__ == "__main__":

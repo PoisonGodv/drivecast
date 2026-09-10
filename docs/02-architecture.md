@@ -105,7 +105,8 @@ CREATE TABLE plan (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   topic_id      INTEGER NOT NULL REFERENCES topic(id),
   title         TEXT NOT NULL,
-  status        TEXT NOT NULL DEFAULT 'draft', -- draft/active/done/archived
+  status        TEXT NOT NULL DEFAULT 'draft', -- generating/active/done/failed/cancelled
+                                               -- generating=大纲异步生成中(占位),failed=大纲生成失败可删除重建
   episode_count INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -204,14 +205,14 @@ CREATE INDEX idx_question_review ON question(next_review_at);
 | GET | `/api/review/today` | 今日待复习题（next_review_at 到期） |
 | POST | `/api/questions/{id}/grade` | 复习自评（更新 mastery + 下次复习时间） |
 
-**示例：创建并生成计划**
+**示例：创建并生成计划**（只落 generating 占位 + plan job，立即返回；大纲由 worker 异步生成，完成后转正 active 并链式入队各集 script job；同主题 generating 期间重复提交幂等复用）
 
 ```http
 POST /api/plans
 { "topic_id": 3, "episode_count": 6 }
 
 201
-{ "plan_id": 12, "job_id": 88, "status": "pending" }
+{ "plan_id": 12, "job_id": 88, "status": "pending", "job_ids": [88] }
 ```
 
 **轮询任务**（SSE 断线时的兜底手段）

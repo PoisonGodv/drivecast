@@ -37,13 +37,16 @@ class PlanDeletionFence:
 
 
 async def enqueue(kind: str, ep_ext_id: str, payload: dict) -> int:
-    """入队(幂等:同 kind+ref_id 的未完成 job 已存在则复用;计划非 active 拒绝)。"""
+    """入队(幂等:同 kind+ref_id 的未完成 job 已存在则复用;计划非存活拒绝)。
+
+    存活 = active / generating(大纲异步生成中);cancelled/删除等终态一律拒绝。
+    """
     async with session() as s:
         plan_ext_id = str(payload.get("plan_id") or "")
         if plan_ext_id:
             plan_status = await s.scalar(select(Plan.status).where(Plan.ext_id == plan_ext_id))
-            if plan_status != "active":
-                raise RuntimeError(f"plan {plan_ext_id} not active, enqueue rejected")
+            if plan_status not in ("active", "generating"):
+                raise RuntimeError(f"plan {plan_ext_id} status={plan_status}, enqueue rejected")
 
         existing = await s.scalar(
             select(Job.id).where(
@@ -75,26 +78,27 @@ async def fence_plan_for_deletion(plan_id: int) -> PlanDeletionFence | None:
         ep_ids = [row[0] for row in episodes]
         ep_ext_ids = [row[1] for row in episodes]
 
+        # 集任务 + 以计划 ext_id 为 ref_id 的大纲 plan 任务(generating 占位计划尚无集)
         job_rows = (
             await s.execute(
                 select(Job.id, Job.status).where(
-                    Job.ref_id.in_(ep_ext_ids),
+                    Job.ref_id.in_([*ep_ext_ids, plan.ext_id]),
                     Job.status.in_(("pending", "running")),
                 )
             )
-        ).all() if ep_ext_ids else []
+        ).all()
 
         cancelled_job_ids = [row[0] for row in job_rows]
         running_job_ids = [row[0] for row in job_rows if row[1] == "running"]
 
         await s.execute(update(Plan).where(Plan.id == plan_id).values(status="cancelled"))
 
+        await s.execute(
+            update(Job)
+            .where(Job.ref_id.in_([*ep_ext_ids, plan.ext_id]), Job.status.in_(("pending", "running")))
+            .values(status="cancelled", error="plan deleted", updated_at=now)
+        )
         if ep_ext_ids:
-            await s.execute(
-                update(Job)
-                .where(Job.ref_id.in_(ep_ext_ids), Job.status.in_(("pending", "running")))
-                .values(status="cancelled", error="plan deleted", updated_at=now)
-            )
             await s.execute(
                 update(Episode)
                 .where(Episode.plan_id == plan_id)

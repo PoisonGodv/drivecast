@@ -18,7 +18,7 @@ from sqlalchemy import select, update
 from ..config import settings
 from ..db import close_db, session
 from ..models import Episode, Job, Plan
-from ..persist import set_episode_status
+from ..persist import set_episode_status, set_plan_status_by_ext
 from ..planner import service as planner
 from ..scriptwriter import service as scriptwriter
 from ..tts import service as tts
@@ -74,20 +74,33 @@ def _now_text() -> str:
     return datetime.now().isoformat(sep=" ", timespec="seconds")
 
 
+async def _alive_ref_ids(s) -> list[str]:
+    """存活计划可复位的 job ref_id 全集:active 计划的集 ext_id + 存活计划的 plan ext_id。
+
+    大纲生成 job(kind=plan)以计划 ext_id 为 ref_id,只数集 ext_id 会漏掉它,
+    进程崩溃后该 running 将永久挂死(generating 占位计划还没有任何集)。
+    """
+    active_plan_ep_ext_ids = (
+        await s.execute(
+            select(Episode.ext_id)
+            .join(Plan, Plan.id == Episode.plan_id)
+            .where(Plan.status == "active")
+        )
+    ).scalars().all()
+    alive_plan_ext_ids = (
+        await s.execute(select(Plan.ext_id).where(Plan.status.in_(("active", "generating"))))
+    ).scalars().all()
+    return list(active_plan_ep_ext_ids) + list(alive_plan_ext_ids)
+
+
 async def _rescan_orphans() -> int:
-    """启动恢复:只复位仍属于 active 计划的 running job 为 pending。"""
+    """启动恢复:只复位仍属于存活计划的 running job 为 pending。"""
     async with session() as s:
-        active_plan_ep_ext_ids = (
-            await s.execute(
-                select(Episode.ext_id)
-                .join(Plan, Plan.id == Episode.plan_id)
-                .where(Plan.status == "active")
-            )
-        ).scalars().all()
-        if not active_plan_ep_ext_ids:
+        ref_ids = await _alive_ref_ids(s)
+        if not ref_ids:
             return 0
         result = await s.execute(
-            update(Job).where(Job.status == "running", Job.ref_id.in_(active_plan_ep_ext_ids))
+            update(Job).where(Job.status == "running", Job.ref_id.in_(ref_ids))
             .values(status="pending", updated_at=_now_text())
         )
         await s.commit()
@@ -95,31 +108,52 @@ async def _rescan_orphans() -> int:
 
 
 async def _reset_stale_running() -> int:
-    """复位挂死的 running(仅限 active 计划)。"""
+    """复位挂死的 running(仅限存活计划)。"""
     threshold = (datetime.now() - timedelta(seconds=settings.worker_stale_running_sec)).isoformat(
         sep=" ", timespec="seconds"
     )
     async with session() as s:
-        active_plan_ep_ext_ids = (
-            await s.execute(
-                select(Episode.ext_id)
-                .join(Plan, Plan.id == Episode.plan_id)
-                .where(Plan.status == "active")
-            )
-        ).scalars().all()
-        if not active_plan_ep_ext_ids:
+        ref_ids = await _alive_ref_ids(s)
+        if not ref_ids:
             return 0
         result = await s.execute(
             update(Job)
             .where(
                 Job.status == "running",
                 Job.updated_at < threshold,
-                Job.ref_id.in_(active_plan_ep_ext_ids),
+                Job.ref_id.in_(ref_ids),
             )
             .values(status="pending", updated_at=_now_text())
         )
         await s.commit()
         return result.rowcount
+
+
+async def _recover_stuck_generating() -> int:
+    """generating 计划却没有在途 plan job(入队失败/任务丢失)→ 标 failed,前端可删除重建。"""
+    async with session() as s:
+        generating = (
+            await s.execute(select(Plan.ext_id).where(Plan.status == "generating"))
+        ).scalars().all()
+        if not generating:
+            return 0
+        inflight = set(
+            (
+                await s.execute(
+                    select(Job.ref_id).where(
+                        Job.kind == "plan",
+                        Job.ref_id.in_(generating),
+                        Job.status.in_(("pending", "running")),
+                    )
+                )
+            ).scalars().all()
+        )
+        stuck = [ext_id for ext_id in generating if ext_id not in inflight]
+        if not stuck:
+            return 0
+        await s.execute(update(Plan).where(Plan.ext_id.in_(stuck)).values(status="failed"))
+        await s.commit()
+        return len(stuck)
 
 
 async def _next_pending() -> Job | None:
@@ -150,13 +184,20 @@ async def _finish(job_id: int, status: str, error: str = "") -> bool:
         return result.rowcount > 0
 
 
-async def _plan_active(plan_ext_id: str) -> bool:
-    """计划存在且为 active 返回 True;其余(cancelled/deleting/不存在)返回 False。"""
+async def _plan_alive(plan_ext_id: str) -> bool:
+    """计划存在且存活返回 True(active/generating);其余(cancelled/不存在)返回 False。"""
     if not plan_ext_id:
         return False
     async with session() as s:
         status = await s.scalar(select(Plan.status).where(Plan.ext_id == plan_ext_id))
-    return status == "active"
+    return status in ("active", "generating")
+
+
+async def _plan_generating(plan_ext_id: str) -> bool:
+    """计划仍处于大纲生成中(占位态)。"""
+    async with session() as s:
+        status = await s.scalar(select(Plan.status).where(Plan.ext_id == plan_ext_id))
+    return status == "generating"
 
 
 async def _retry_or_fail(job: Job, exc: BaseException) -> None:
@@ -168,9 +209,37 @@ async def _retry_or_fail(job: Job, exc: BaseException) -> None:
     else:
         cas_ok = await _finish(job.id, "failed", err)
         if cas_ok:
-            await set_episode_status(job.ref_id, "failed")
+            if job.kind == "plan":
+                # 大纲生成彻底失败:占位计划转 failed,前端可见可删除重建
+                await set_plan_status_by_ext(job.ref_id, "failed")
+            else:
+                await set_episode_status(job.ref_id, "failed")
             print(f"[worker] job#{job.id} {job.kind}/{job.ref_id} 失败(已达{job.max_attempt}次): {err[:120]}")
             traceback.print_exception(exc)
+
+
+async def _run_plan_job(job: Job) -> None:
+    """计划大纲生成(docs/02 §4 kind=plan):LLM 出大纲 → 占位行转正 active → 链式入队各集 script。
+
+    执行前/落库后都校验占位态:生成期间计划被删除时直接丢弃产出,防止删后复活。
+    """
+    payload = json.loads(job.payload)
+    plan_ext_id = payload["plan_id"]
+    if not await _plan_generating(plan_ext_id):
+        await _finish(job.id, "cancelled", "plan not generating")
+        return
+    plan_rec = await planner.create_plan(
+        payload["topic"], direction=payload["direction"],
+        episode_count=payload.get("episode_count"), target_minutes=payload.get("target_minutes"),
+        plan_id=plan_ext_id,
+    )
+    if not await _plan_alive(plan_ext_id):
+        settings.plan_path(plan_ext_id).unlink(missing_ok=True)
+        await _finish(job.id, "cancelled", "plan deleted during generation")
+        return
+    from .pipeline import enqueue_plan_all
+    await enqueue_plan_all(plan_rec)
+    await _finish(job.id, "done")
 
 
 async def _run_script_job(job: Job) -> None:
@@ -179,8 +248,8 @@ async def _run_script_job(job: Job) -> None:
     ep = next(e for e in plan.episodes if e.seq == payload["seq"])
     await scriptwriter.write_script(plan, ep)
     from .pipeline import enqueue
-    if not await _plan_active(plan.plan_id):
-        print(f"[worker] job#{job.id} 所属计划非 active,停止后续入队")
+    if not await _plan_alive(plan.plan_id):
+        print(f"[worker] job#{job.id} 所属计划非存活,停止后续入队")
         await _finish(job.id, "cancelled", "plan not active")
         return
     await enqueue("tts", ep.episode_id, {"plan_id": plan.plan_id, "seq": ep.seq})
@@ -220,6 +289,7 @@ async def _run_audio_upgrade_job(job: Job) -> None:
 
 
 _EXECUTORS = {
+    "plan": _run_plan_job,
     "script": _run_script_job,
     "tts": _run_tts_job,
     "audio_upgrade": _run_audio_upgrade_job,
@@ -249,9 +319,9 @@ async def _execute_one(job: Job) -> None:
     assert current_task is not None
 
     async with lock:
-        if not await _plan_active(plan_ext_id):
+        if not await _plan_alive(plan_ext_id):
             await _finish(job.id, "cancelled", "plan not active")
-            print(f"[worker] job#{job.id} 所属计划非 active,标记 cancelled 跳过")
+            print(f"[worker] job#{job.id} 所属计划非存活,标记 cancelled 跳过")
             return
         child_task = asyncio.create_task(_execute_job_task(job, plan_ext_id))
         register_running_job(plan_ext_id, job.id, child_task)
@@ -275,6 +345,9 @@ async def run_until_empty() -> None:
     orphans = await _rescan_orphans()
     if orphans:
         print(f"[worker] 恢复 {orphans} 个中断 job(running→pending)")
+    stuck = await _recover_stuck_generating()
+    if stuck:
+        print(f"[worker] {stuck} 个生成中计划无在途 plan job,标记 failed")
     while True:
         job = await _next_pending()
         if job is None:
@@ -295,6 +368,9 @@ async def run_forever() -> None:
     orphans = await _rescan_orphans()
     if orphans:
         print(f"[worker] 恢复 {orphans} 个中断 job(running→pending)")
+    stuck = await _recover_stuck_generating()
+    if stuck:
+        print(f"[worker] {stuck} 个生成中计划无在途 plan job,标记 failed")
     last_stale_check = time.monotonic()
     backoff = _BACKOFF_INITIAL
     try:
