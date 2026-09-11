@@ -7,7 +7,7 @@
 
 ```
 主题 ──► [S1 学习计划] ──► [S2 逐集脚本生成] ──► [S3 脚本预处理 TTS友好化]
-      ──► [S4 edge-tts 分角色分段合成] ──► [S5 音频后处理(响度归一/拼接/元数据)]
+      ──► [S4 TTS 分角色分段合成(edge-tts/豆包)] ──► [S5 音频后处理(响度归一/拼接/元数据)]
       ──► [S6 入库 + 章节标记 + 播放页]
 ```
 
@@ -76,7 +76,7 @@ edge-tts 单次请求有长度与稳定性约束,且长文本容易被限流/截
 
 ---
 
-## 3. S4:edge-tts 合成细节
+## 3. S4:TTS 合成细节(edge-tts 默认 / 豆包可选)
 
 ### 3.1 音色选择(中文 Neural)
 
@@ -118,6 +118,19 @@ async def synth(text, voice, rate, pitch, out):
     c = edge_tts.Communicate(text, voice=voice, rate=rate, pitch=pitch)
     await c.save(out)   # 每 chunk 独立 mp3
 ```
+
+### 3.5 豆包语音合成 seed-tts-2.0(付费可选通道)
+
+edge-tts 是免费公共服务,音色与稳定性受微软侧约束;接入火山引擎豆包 TTS(seed-tts-2.0)作为可切换的第二通道。协议用同族 v3 接口中的 **HTTP 单向流式**(`POST https://openspeech.bytedance.com/api/v3/tts/unidirectional`,NDJSON 流式返回 base64 音频)——本场景是批量出文件、chunk 文本本来就整段就绪,用不到双向 WS 的"边发文本边收音频",HTTP 通道更简单且是 API Key 鉴权的官方文档化组合。双向流式 WS(`wss://.../api/v3/tts/bidirection`)为同能力实时版,后续要做边生成边播再迁。
+
+- **鉴权(新版控制台,推荐)**:一个 API Key 即可——`X-Api-Key` + `X-Api-Resource-Id`;旧版控制台退回 `X-Api-App-Id` + `X-Api-Access-Key` 一对,代码按配置自动切换
+- **Resource-Id 即模型代次**:默认 `seed-tts-2.0`(仅 2.0 音色,`*_uranus_bigtts` / `saturn_*` 命名);用 1.0 音色(`*_moon_bigtts`/`*_wvae_bigtts` 等)需改 `TTS_DOUBAO_RESOURCE_ID=seed-tts-1.0`,代次与音色不匹配报 `55000000 resource ID is mismatched`
+- **切换**:`.env` 设 `TTS_PROVIDER=doubao` + `TTS_DOUBAO_API_KEY`;edge 通道配置不动,随时切回
+- **默认音色**:expert=`zh_male_m191_uranus_bigtts`(云舟,男)、host=`zh_female_vv_uranus_bigtts`(Vivi,女)——均为社区实测效果好的 2.0 音色;`TTS_DOUBAO_RATE_EXPERT/HOST` 复用 edge 的 ±N% 语义(speech_rate [-50,100])
+- **实现**(`tts/doubao.py`):单 chunk 单请求,流式逐行解析 NDJSON,`code=0` 的 data(base64)拼音频,`code=20000000` 结束,非 0 抛错;坏行抛错不吞(吞会静默丢音频)
+- **失败语义与 edge 通道完全一致**:全局信号量 + 指数退避 + `.part` 原子写 + 单 chunk 重试,断点续合成/章节/响度归一全链路不受通道影响
+- **试音**:`python scripts/doubao_voice_probe.py` 按当前配置音色各合成一句到 `data/audio/_probe/`
+- 付费按 `text` 字符计费;2.0 支持 `additions.context_texts` 自然语言情感/语速指令(逐句调用才稳定,暂未接,需要时按官方 additions 文档加)
 
 ---
 

@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     reviewer_enabled: bool = True   # 脚本事实审稿(docs/07 §3.1);REVIEWER_ENABLED=false 可关省一次 LLM 调用
 
     # ---- TTS(docs/03 §3)----
+    tts_provider: str = "edge"                    # edge(免费) | doubao(火山引擎豆包,docs/03 §3.5)
     tts_voice_expert: str = "zh-CN-YunxiNeural"   # 主讲(男,沉稳)
     tts_voice_host: str = "zh-CN-XiaoxiaoNeural"  # 主持(女,活泼)—— M2 对话式用
     tts_rate_expert: str = "-5%"                  # 车载基调略减速
@@ -34,6 +35,20 @@ class Settings(BaseSettings):
     tts_pitch: str = "+0Hz"
     tts_max_concurrency: int = 1                  # M1 串行;上限 3
     tts_chunk_max_retries: int = 5
+    # 豆包语音合成 seed-tts-2.0(docs/03 §3.5);TTS_PROVIDER=doubao 时生效
+    tts_doubao_api_key: str = ""                  # 新版控制台 API Key(X-Api-Key),一个 key 即可
+    tts_doubao_app_key: str = ""                  # 旧版控制台退回 App ID + Access Token 一对
+    tts_doubao_access_key: str = ""
+    tts_doubao_http_url: str = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
+    tts_doubao_resource_id: str = "seed-tts-2.0"  # 选模型代次+计费;2.0 音色配 seed-tts-2.0
+    tts_doubao_uid: str = "drivecast"
+    tts_doubao_format: str = "mp3"                # mp3/ogg_opus/pcm;拼接管线按 mp3
+    tts_doubao_sample_rate: int = 24000
+    tts_doubao_voice_expert: str = "zh_male_m191_uranus_bigtts"    # 云舟(男,2.0 实测效果好)
+    tts_doubao_voice_host: str = "zh_female_vv_uranus_bigtts"      # Vivi(女,2.0 实测效果好)
+    tts_doubao_rate_expert: int = -5              # speech_rate,[-50,100]
+    tts_doubao_rate_host: int = 2
+    tts_doubao_recv_timeout: int = 30             # 流式单次读超时,超时按失败退避重试
 
     # ---- 音频后处理(docs/03 §4)----
     loudness_i: float = -16.0       # LUFS,播客常用

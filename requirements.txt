@@ -3,6 +3,8 @@ edge-tts~=7.2
 openai~=2.6
 pydantic~=2.12
 pydantic-settings~=2.12
+# 豆包 seed-tts-2.0 TTS 通道(docs/03 §3.5),HTTP 流式
+httpx~=0.28
 # M2+ 备用(见 docs/02 §1,一次装齐避免后续动环境)
 fastapi~=0.128
 uvicorn[standard]~=0.38

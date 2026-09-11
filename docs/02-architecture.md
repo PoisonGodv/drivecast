@@ -15,7 +15,7 @@
 | 前端 | **无构建静态页 + petite-vue（约 6KB）** | 个人工具优先轻量：5 个视图（首页/创建/计划详情/播放器/题库），交互不重，上全家桶是过度工程；FastAPI `StaticFiles` 直接托管 `static/`，**零 node_modules、改动即刷新、同源无 CORS**；`<audio>` 原生支持 Range 流式播放。交互复杂度上升后再平滑迁 Vue3+Vite | Vue3+Vite/React：MVP 阶段构建链与依赖是负担；服务端模板：播放进度、SSE、题库翻面等交互体验差 |
 | 任务队列 | **asyncio + 进程内 asyncio.Queue + 持久化 job 表** | 音频/脚本生成是分钟级长任务，但单用户。用 DB 表做 job 状态机（pending/running/done/failed），进程内 worker 消费，**重启后从 job 表恢复**，天然支持断点续跑 | Celery/Redis：个人工具引入 broker 是负担 |
 | LLM SDK | **openai-python (兼容协议)** | 用户已有 LLM API，走 OpenAI 兼容 base_url 可覆盖绝大多数厂商；`response_format`/工具调用做结构化输出 | 各厂商原生 SDK：锁定单一 provider |
-| 音频 | **edge-tts** | 免费、中文 `zh-CN-XiaoxiaoNeural` 等音色自然、无需密钥；同步流式写文件 | 商用 TTS：成本与密钥管理无必要 |
+| 音频 | **edge-tts**(默认) / **豆包 TTS**(可选付费,03 §3.5) | 免费、中文 `zh-CN-XiaoxiaoNeural` 等音色自然、无需密钥；同步流式写文件。豆包通道音色更自然、按量付费，env 一键切换 | 全依赖商用 TTS：默认仍走免费，付费按需开 |
 
 **Python 3.14 说明**：FastAPI/SQLAlchemy/openai 主干已支持。风险在个别传递依赖的 C 扩展 wheel 滞后，对策见 §6。建议 pyenv 锁定 3.14.7，requirements 用 `~=` 钉小版本并提交 `requirements.lock`。
 
@@ -46,6 +46,7 @@ drivecast/
 │   │   └── service.py            # episode 大纲→面试导向脚本(知识点+问法+答题框架)
 │   ├── tts/
 │   │   ├── edge.py               # edge-tts 封装: 脚本→mp3, 流式写, 限流/重试
+│   │   ├── doubao.py             # 豆包 seed-tts-2.0 TTS 封装(可选通道, 03 §3.5): HTTP 流式+NDJSON
 │   │   └── service.py            # 分段合成→合并, 产物落 audio 表
 │   ├── library/
 │   │   └── service.py            # 内容库查询: 计划/集/进度/题库聚合

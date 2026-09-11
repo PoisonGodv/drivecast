@@ -12,7 +12,7 @@ import statistics
 from pathlib import Path
 
 from ..config import ensure_data_dirs, settings
-from . import edge, friendly
+from . import doubao, edge, friendly
 from .chunk import chunk_text
 
 SILENCE_ROLE_SWITCH_MS = 250
@@ -21,10 +21,18 @@ SECTION_KEYS = ("S0", "S1", "S2", "S3", "S4")
 # 旧脚本没有结构字段时，用固定内容占比映射到五章；只切元数据，不往口播补段名。
 LEGACY_SECTION_WEIGHTS = (0.07, 0.34, 0.27, 0.20, 0.12)
 
-_VOICE_RATE = {
-    "expert": (settings.tts_voice_expert, settings.tts_rate_expert),
-    "host": (settings.tts_voice_host, settings.tts_rate_host),
-}
+
+def _voice_rate() -> dict[str, tuple]:
+    """speaker → (voice, rate);通道切换时音色/语速各用各的(docs/03 §3.5)。"""
+    if settings.tts_provider == "doubao":
+        return {
+            "expert": (settings.tts_doubao_voice_expert, settings.tts_doubao_rate_expert),
+            "host": (settings.tts_doubao_voice_host, settings.tts_doubao_rate_host),
+        }
+    return {
+        "expert": (settings.tts_voice_expert, settings.tts_rate_expert),
+        "host": (settings.tts_voice_host, settings.tts_rate_host),
+    }
 
 
 async def _run(cmd: list[str]) -> tuple[int, str]:
@@ -122,9 +130,10 @@ def build_tts_json(script: dict) -> list[dict]:
     ep_id = script["episode_id"]
     chunks: list[dict] = []
     section_rows: list[dict] = []
+    voice_rate = _voice_rate()
 
     def add(section_key: str, section_title: str, speaker: str, text: str) -> None:
-        voice, rate = _VOICE_RATE[speaker]
+        voice, rate = voice_rate[speaker]
         for part in chunk_text(friendly.friendly(text)):
             chunks.append({
                 "seq": len(chunks) + 1,
@@ -141,7 +150,7 @@ def build_tts_json(script: dict) -> list[dict]:
         if section["turns"]:
             for turn in section["turns"]:
                 speaker = turn.get("speaker", "expert")
-                add(section["key"], section["title"], speaker if speaker in _VOICE_RATE else "expert",
+                add(section["key"], section["title"], speaker if speaker in voice_rate else "expert",
                     turn.get("text", ""))
         elif section["content"].strip():
             add(section["key"], section["title"], "expert", section["content"])
@@ -196,6 +205,7 @@ def _section_rows(chunks: list[dict]) -> list[dict]:
 
 async def _synth_missing(ep_id: str, chunks: list[dict]) -> list[Path]:
     """只合成缺失的 chunk(断点续核心)，返回有序路径。"""
+    provider = doubao if settings.tts_provider == "doubao" else edge
     chunks_dir = settings.chunks_dir(ep_id)
     paths = [chunks_dir / f"{c['seq']:03d}.mp3" for c in chunks]
     missing = [(c, p) for c, p in zip(chunks, paths) if not (p.exists() and p.stat().st_size > 0)]
@@ -204,8 +214,8 @@ async def _synth_missing(ep_id: str, chunks: list[dict]) -> list[Path]:
     for index, (chunk, path) in enumerate(missing, 1):
         print(f"[tts] 合成 {chunk['seq']:03d}/{len(chunks)} ({len(chunk['text'])}字) "
               f"[{index}/{len(missing)}]")
-        await edge.synth_chunk(chunk["text"], chunk["voice"], chunk["rate"], path)
-        await edge.jitter_sleep()
+        await provider.synth_chunk(chunk["text"], chunk["voice"], chunk["rate"], path)
+        await provider.jitter_sleep()
     return paths
 
 
