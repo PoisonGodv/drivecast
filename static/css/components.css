@@ -25,6 +25,11 @@
   transform: scale(0.98);
 }
 
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .btn-primary {
   background: var(--accent-strong);
   color: #0f1115;
@@ -489,6 +494,57 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 播放页选集:复用章节跳转行,序号列收窄、右列放状态/正在播放指示 */
+.episode-jump {
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+}
+
+.episode-jump:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.episode-jump:disabled:hover {
+  background: none;
+  color: var(--text-secondary);
+}
+
+.episode-jump.active {
+  background: rgba(138, 180, 248, 0.15);
+  color: var(--text);
+}
+
+.episode-jump-playing {
+  color: var(--accent-strong);
+}
+
+.episode-jump-status {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* 首页计划标题链接:点标题进详情页选集 */
+.card-title-link {
+  display: block;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.card-title-link:hover {
+  color: var(--accent);
+}
+
+/* 播放页顶部计划名:点击回计划详情 */
+.player-plan-link {
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.player-plan-link:hover {
+  color: var(--accent);
 }
 
 .quality-summary {

@@ -6,7 +6,7 @@
  */
 
 import { reactive } from '../vendor/petite-vue.js'
-import { api } from './api.js?v=20260911'
+import { api } from './api.js?v=20260911b'
 
 const SPRINT_STORAGE_PREFIX = 'drivecast.review.sprint.completed.'
 

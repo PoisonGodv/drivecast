@@ -6,10 +6,10 @@
  */
 
 import { createApp, reactive } from '../vendor/petite-vue.js'
-import { api, connectPlanEvents } from './api.js?v=20260911'
-import { player, loadEpisode, togglePlay, seek, seekToRatio, cycleRate, toggleTranscript, formatTime } from './player.js?v=20260911'
-import { store } from './store.js?v=20260911'
-import { useReview, isDue, formatDate, masteryLabels, directionNames } from './review.js?v=20260911'
+import { api, connectPlanEvents } from './api.js?v=20260911b'
+import { player, loadEpisode, togglePlay, seek, seekToRatio, cycleRate, toggleTranscript, formatTime, nextEpisode, previousEpisode } from './player.js?v=20260911b'
+import { store } from './store.js?v=20260911b'
+import { useReview, isDue, formatDate, masteryLabels, directionNames } from './review.js?v=20260911b'
 
 const DIRECTIONS = [
   { key: 'backend_arch', label: '后端/架构面试' },
@@ -90,6 +90,11 @@ const appState = reactive({
 
   get hasActivePlayer() {
     return Boolean(this.player.episodeId)
+  },
+
+  /* 播放页选集面板:当前计划全部集按 seq 排序(含未就绪,置灰展示状态) */
+  get sortedPlanEpisodes() {
+    return (this.player.plan?.episodes || []).slice().sort((a, b) => a.seq - b.seq)
   },
 
   /* ---------- 路由 ---------- */
@@ -183,7 +188,8 @@ const appState = reactive({
     const ready = plan.episodes
       ?.filter((e) => e.status === 'ready')
       .sort((a, b) => a.seq - b.seq)
-    const ep = ready?.[0]
+    // 优先续听第一集"未听完"的;全部听完则回到第一集(从头复听)
+    const ep = ready?.find((e) => e.listen_status !== 'done') || ready?.[0]
     if (ep) {
       this.go(`/play/${ep.id}?plan=${plan.id}`)
     } else {
@@ -336,6 +342,16 @@ const appState = reactive({
     this.go(`/play/${epId}?plan=${this.plan.id}`)
   },
 
+  /* 播放页选集:复用播放器里已加载的 plan,切集不整页刷新 */
+  playEpisode(epId) {
+    const plan = this.player.plan || this.plan
+    if (!plan) return
+    if (String(this.player.episodeId) !== String(epId)) {
+      loadEpisode(epId, plan)
+    }
+    this.go(`/play/${epId}?plan=${plan.id}`)
+  },
+
   /* ---------- 播放器 ---------- */
   async enterPlayer(episodeId, planId) {
     if (String(player.state.episodeId) === String(episodeId)) return
@@ -393,6 +409,8 @@ const appState = reactive({
   seek,
   cycleRate,
   toggleTranscript,
+  nextEpisode,
+  previousEpisode,
 })
 
 window.addEventListener('hashchange', () => appState.applyRoute())

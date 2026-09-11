@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#0f1115">
   <title>DriveCast</title>
-  <link rel="stylesheet" href="/static/css/base.css?v=20260911">
-  <link rel="stylesheet" href="/static/css/components.css?v=20260911">
-  <link rel="stylesheet" href="/static/css/review.css?v=20260911">
+  <link rel="stylesheet" href="/static/css/base.css?v=20260911b">
+  <link rel="stylesheet" href="/static/css/components.css?v=20260911b">
+  <link rel="stylesheet" href="/static/css/review.css?v=20260911b">
 </head>
 <body>
   <div id="app">
@@ -35,7 +35,7 @@
         <div v-else>
           <div v-for="plan in inProgressPlans" :key="plan.id" class="card plan-card">
             <div>
-              <div class="card-title">{{ plan.title }}</div>
+              <a :href="'#/plan/' + plan.id" class="card-title card-title-link">{{ plan.title }}</a>
               <div class="card-meta">
                 <template v-if="plan.status === 'generating'">大纲生成中，通常需要 1~5 分钟</template>
                 <template v-else-if="plan.status === 'failed'">大纲生成失败，可删除后重新创建</template>
@@ -230,7 +230,12 @@
       <section v-if="route === 'play'" key="play" class="fade-in player-page">
         <div class="player-meta">
           <div class="player-plan">
-            {{ player.plan?.title || '' }}
+            <a
+              v-if="player.planId"
+              :href="'#/plan/' + player.planId"
+              class="player-plan-link"
+            >{{ player.plan?.title || '' }}</a>
+            <template v-else>{{ player.plan?.title || '' }}</template>
             <span v-if="player.episode?.seq">· 第 {{ player.episode.seq }} 集</span>
           </div>
           <h1 class="player-title">{{ player.episode?.title || '选择一集开始收听' }}</h1>
@@ -292,6 +297,31 @@
           <button class="player-btn skip" @click="seek(15)" aria-label="前进 15 秒">+15s</button>
         </div>
 
+        <section v-if="sortedPlanEpisodes.length" class="player-panel" aria-labelledby="episode-picker-title">
+          <div class="player-panel-heading">
+            <h2 id="episode-picker-title">选集</h2>
+            <span>已就绪 {{ planProgress(player.plan).ready }}/{{ sortedPlanEpisodes.length }} 集</span>
+          </div>
+          <div class="chapter-list">
+            <button
+              v-for="ep in sortedPlanEpisodes"
+              :key="ep.id"
+              class="chapter-jump episode-jump"
+              :class="{ active: String(player.episodeId) === String(ep.id) }"
+              :disabled="ep.status !== 'ready'"
+              @click="playEpisode(ep.id)"
+            >
+              <span class="chapter-time">{{ ep.seq }}</span>
+              <span class="chapter-title">
+                {{ ep.title }}<template v-if="ep.duration_sec"> · {{ formatTime(ep.duration_sec) }}</template>
+              </span>
+              <span v-if="String(player.episodeId) === String(ep.id)" class="episode-jump-playing" aria-hidden="true">{{ player.playing ? '⏸' : '▶' }}</span>
+              <span v-else-if="ep.status !== 'ready'" class="episode-jump-status">{{ STATUS_LABELS[ep.status] || ep.status }}</span>
+              <span v-else aria-hidden="true">›</span>
+            </button>
+          </div>
+        </section>
+
         <section v-if="player.chapters.length" class="player-panel chapters-panel" aria-labelledby="chapters-title">
           <div class="player-panel-heading">
             <h2 id="chapters-title">本集章节</h2>
@@ -350,6 +380,8 @@
         </section>
 
         <div class="player-extras">
+          <button class="btn btn-ghost" :disabled="!player.episode" @click="previousEpisode">⏮ 上一集</button>
+          <button class="btn btn-ghost" :disabled="!player.episode" @click="nextEpisode">⏭ 下一集</button>
           <button class="btn btn-ghost" @click="cycleRate">{{ player.playbackRate }}x</button>
           <a
             v-if="player.downloadUrl"
@@ -771,6 +803,6 @@
     <div class="toast" :class="{ show: toast }">{{ toast }}</div>
   </div>
 
-  <script type="module" src="/static/js/main.js?v=20260911"></script>
+  <script type="module" src="/static/js/main.js?v=20260911b"></script>
 </body>
 </html>

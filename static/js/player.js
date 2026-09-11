@@ -6,8 +6,8 @@
  */
 
 import { reactive } from '../vendor/petite-vue.js'
-import { api } from './api.js?v=20260911'
-import { store } from './store.js?v=20260911'
+import { api } from './api.js?v=20260911b'
+import { store } from './store.js?v=20260911b'
 
 export const playbackRates = [0.75, 1, 1.25, 1.5, 2]
 
@@ -236,7 +236,7 @@ function sortedReadyEpisodes() {
     .sort((a, b) => a.seq - b.seq)
 }
 
-function nextEpisode() {
+export function nextEpisode() {
   const current = player.state.episode
   if (!current || !player.state.plan) return
   const ready = sortedReadyEpisodes()
@@ -245,7 +245,7 @@ function nextEpisode() {
   else pause()
 }
 
-function previousEpisode() {
+export function previousEpisode() {
   const current = player.state.episode
   if (!current || !player.state.plan) return
   const ready = sortedReadyEpisodes()
