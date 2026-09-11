@@ -58,6 +58,8 @@ class Episode(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
     position_sec: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     listen_status: Mapped[str] = mapped_column(Text, nullable=False, default="unlistened")
+    scheduled_date: Mapped[str | None] = mapped_column(Text, nullable=True)  # 排期日 YYYY-MM-DD
+    covers: Mapped[str] = mapped_column(Text, nullable=False, default="[]")  # 覆盖题库题 id JSON 数组
 
 
 class Script(Base):
@@ -66,6 +68,7 @@ class Script(Base):
     episode_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True)
     content_md: Mapped[str] = mapped_column(Text, nullable=False)
     knowledge: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    refs: Mapped[str] = mapped_column(Text, nullable=False, default="[]")  # 参考链接 JSON:[{title,url,note}]
     token_usage: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[str] = _now()
 

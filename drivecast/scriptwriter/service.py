@@ -21,6 +21,7 @@ from ..content.loader import get_fact_cards, get_question_bank
 from ..llm import prompts
 from ..llm.provider import get_provider
 from ..persist import upsert_script
+from ..refs import hunter
 from ..schemas import (
     EpisodeRec,
     PlanRec,
@@ -303,8 +304,21 @@ async def write_script(plan: PlanRec, ep: EpisodeRec, *, force: bool = False) ->
         "usage_tokens": getattr(out, "_usage", 0),
         "status": "scripted",
     }
+
+    # 集级参考链接:生成时实时猎取(搜索 API → LLM 提名 → 题库静态 refs,统一存活校验),
+    # 与事实审稿并行(hunter 永不抛异常;审稿 block 会让整轮作废,参考链接一并丢弃无妨)
+    keywords = sorted({str(t) for q in matched for t in q.get("topic", []) if t})
+    cards = get_fact_cards(keywords)[:3]
     if settings.reviewer_enabled:
-        data["review"] = await _review(data, ep, matched)  # 拦在落盘前,block 则本轮作废
+        review, references = await asyncio.gather(
+            _review(data, ep, matched),  # 拦在落盘前,block 则本轮作废
+            hunter.hunt_references(plan, ep, matched, cards),
+        )
+        data["review"] = review
+    else:
+        references = await hunter.hunt_references(plan, ep, matched, cards)
+    data["references"] = references  # 供复习卡片/脚本页读原文;旧脚本无此字段,读取处用 .get
+
     save_script(ep.episode_id, data)
     _wipe_derived(ep.episode_id)  # 脚本变了,下游产物全部作废
     await upsert_script(ep.episode_id, data)  # 双写 DB:script + question(docs/05 M2-5)

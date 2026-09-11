@@ -89,7 +89,8 @@ class ReviewServiceTest(unittest.IsolatedAsyncioTestCase):
 
         mastered = await service.grade_question(1, "mastered")
         self.assertEqual(mastered["review_count"], 2)
-        self.assertEqual(mastered["next_review_at"], "2026-08-27 09:00:00")
+        # mastered 走复习次数阶梯 [1,2,4,7,15,30]:第 2 次复习取 2 天
+        self.assertEqual(mastered["next_review_at"], "2026-08-22 09:00:00")
 
         unknown = await service.grade_question(1, "unknown")
         self.assertEqual(unknown["review_count"], 3)
@@ -174,10 +175,10 @@ class ReviewMigrationTest(unittest.TestCase):
             check=True, cwd=PROJECT_ROOT, capture_output=True, text=True,
         )
 
-    def test_review_migration_is_in_chain_to_sole_0004_head(self) -> None:
+    def test_review_migration_is_in_chain_to_sole_0005_head(self) -> None:
         alembic_config = Config(str(PROJECT_ROOT / "alembic.ini"))
         script = ScriptDirectory.from_config(alembic_config)
-        self.assertEqual(script.get_heads(), ["0004"])
+        self.assertEqual(script.get_heads(), ["0005"])
         revisions = {revision.revision for revision in script.walk_revisions()}
         self.assertIn("0002", revisions)
 
@@ -221,7 +222,7 @@ class ReviewMigrationTest(unittest.TestCase):
             self.assertIn("last_reviewed_at", question_columns)
             self.assertTrue({"meta_json", "quality_status"}.issubset(audio_columns))
             self.assertEqual(kp_id, "episode:1")
-            self.assertEqual(version, "0004")
+            self.assertEqual(version, "0005")
             self.assertEqual(settings_row, (1,))
 
     def test_0004_repairs_create_all_tables_defaults_and_backfills(self) -> None:
@@ -308,7 +309,7 @@ class ReviewMigrationTest(unittest.TestCase):
             with contextlib.closing(sqlite3.connect(db_path)) as conn:
                 version = conn.execute("SELECT version_num FROM alembic_version").fetchone()[0]
                 columns = [row[1] for row in conn.execute("PRAGMA table_info(audio)")]
-            self.assertEqual(version, "0004")
+            self.assertEqual(version, "0005")
             self.assertEqual(columns.count("meta_json"), 1)
             self.assertEqual(columns.count("quality_status"), 1)
 

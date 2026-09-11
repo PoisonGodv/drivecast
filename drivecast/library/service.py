@@ -7,6 +7,7 @@ from pathlib import Path
 
 from sqlalchemy import and_, case, delete, func, or_, select
 
+from ..content.loader import get_question_bank
 from ..db import session
 from ..models import (
     Audio,
@@ -15,12 +16,25 @@ from ..models import (
     Question,
     ReviewReplay,
     ReviewSettings,
+    Script,
     Topic,
 )
+from ..schemas import DIRECTION_NAMES
 
 _VALID_MASTERY = frozenset({"unknown", "fuzzy", "mastered"})
 _WEAK_MASTERY = ("unknown", "fuzzy")
-_MASTERY_INTERVAL_DAYS = {"unknown": 1, "fuzzy": 2, "mastered": 7}
+# 遗忘曲线阶梯:unknown/fuzzy 固定短间隔;
+# mastered 按已复习次数取 1/2/4/7/15/30 天(第 6 次起稳定 30 天)
+_FIXED_INTERVAL_DAYS = {"unknown": 1, "fuzzy": 2}
+_MASTERED_STEPS_DAYS = [1, 2, 4, 7, 15, 30]
+
+
+def _interval_days(mastery: str, review_count: int) -> int:
+    """review_count 为自增后的已复习次数;mastered 第 N 次取阶梯第 N 级。"""
+    if mastery != "mastered":
+        return _FIXED_INTERVAL_DAYS[mastery]
+    index = min(max(review_count - 1, 0), len(_MASTERED_STEPS_DAYS) - 1)
+    return _MASTERED_STEPS_DAYS[index]
 
 
 def _now() -> datetime:
@@ -52,7 +66,8 @@ def _kp_name(kp_id: str, episode_title: str) -> str:
     return episode_title if kp_id.startswith("episode:") else kp_id
 
 
-def _question_view(q: Question, ep: Episode, plan: Plan, topic: Topic) -> dict:
+def _question_view(q: Question, ep: Episode, plan: Plan, topic: Topic,
+                   script: Script | None = None) -> dict:
     kp_id = _kp_key(q)
     return {
         "id": q.id,
@@ -71,6 +86,8 @@ def _question_view(q: Question, ep: Episode, plan: Plan, topic: Topic) -> dict:
         "plan_id": plan.id,
         "plan_title": plan.title,
         "direction": topic.direction,
+        # 复习卡片附参考链接(脚本 refs,题库题 refs 的集级汇总)
+        "references": _safe_json_list(script.refs) if script else [],
     }
 
 
@@ -123,6 +140,7 @@ async def get_plan(plan_id: int) -> dict | None:
                 "seq": ep.seq,
                 "title": ep.title,
                 "status": ep.status,
+                "scheduled_date": ep.scheduled_date,  # 排期日 YYYY-MM-DD,前端展示排期
                 "has_audio": has_audio,
                 "duration_sec": audio.duration_sec if audio else 0,
                 "position_sec": ep.position_sec,
@@ -159,10 +177,11 @@ async def get_plan_by_id(plan_id: int) -> Plan | None:
 
 def _review_stmt():
     return (
-        select(Question, Episode, Plan, Topic)
+        select(Question, Episode, Plan, Topic, Script)
         .join(Episode, Episode.id == Question.episode_id)
         .join(Plan, Plan.id == Episode.plan_id)
         .join(Topic, Topic.id == Plan.topic_id)
+        .outerjoin(Script, Script.episode_id == Episode.id)  # 取复习卡片参考链接
     )
 
 
@@ -196,7 +215,8 @@ async def today_review(
                 Question.id,
             )
         )
-        return [_question_view(q, ep, plan, topic) for q, ep, plan, topic in result]
+        return [_question_view(q, ep, plan, topic, script)
+                for q, ep, plan, topic, script in result]
 
 
 async def list_questions(
@@ -213,7 +233,8 @@ async def list_questions(
         if direction:
             where = and_(where, Topic.direction == direction)
         result = await s.execute(_review_stmt().where(where).order_by(Question.id.desc()))
-        return [_question_view(q, ep, plan, topic) for q, ep, plan, topic in result]
+        return [_question_view(q, ep, plan, topic, script)
+                for q, ep, plan, topic, script in result]
 
 
 async def grade_question(question_id: int, mastery: str) -> dict:
@@ -231,7 +252,7 @@ async def grade_question(question_id: int, mastery: str) -> dict:
         q.review_count = (q.review_count or 0) + 1
         q.last_reviewed_at = _dt_text(reviewed_at)
         q.next_review_at = _dt_text(
-            reviewed_at + timedelta(days=_MASTERY_INTERVAL_DAYS[mastery])
+            reviewed_at + timedelta(days=_interval_days(mastery, q.review_count))
         )
         await s.flush()
         replay = await _sync_replay_for_kp(s, q.kp_id, reviewed_at.date())
@@ -349,6 +370,93 @@ async def _sync_replay_for_kp(s, kp_id: str, today: date) -> dict | None:
         "episode_id": replay.episode_id,
         "weak_question_count": replay.weak_question_count,
     }
+
+
+async def daily_plan() -> dict:
+    """今日学习视图:今天排期的新集 + 复习题三态统计(到期/逾期/未排期)。"""
+    now = _now()
+    today = now.date().isoformat()
+    async with session() as s:
+        result = await s.execute(
+            select(Episode, Plan, Topic)
+            .join(Plan, Plan.id == Episode.plan_id)
+            .join(Topic, Topic.id == Plan.topic_id)
+            .where(Episode.scheduled_date == today, Plan.status == "active")
+            .order_by(Plan.id, Episode.seq)
+        )
+        new_episodes = [{
+            "episode_id": ep.id,
+            "plan_id": plan.id,
+            "plan_title": plan.title,
+            "seq": ep.seq,
+            "title": ep.title,
+            "scheduled_date": ep.scheduled_date,
+            "listen_status": ep.listen_status,
+            "status": ep.status,
+            "direction": topic.direction,
+        } for ep, plan, topic in result]
+
+        now_text = _dt_text(now)
+        due_count = await s.scalar(
+            select(func.count(Question.id)).where(
+                Question.next_review_at.is_not(None),
+                Question.next_review_at <= now_text,
+            )
+        ) or 0
+        overdue_count = await s.scalar(
+            select(func.count(Question.id)).where(
+                Question.next_review_at.is_not(None),
+                Question.next_review_at < f"{today} 00:00:00",
+            )
+        ) or 0
+        new_count = await s.scalar(
+            select(func.count(Question.id)).where(Question.next_review_at.is_(None))
+        ) or 0
+    return {
+        "date": today,
+        "new_episodes": new_episodes,
+        "due_count": due_count,
+        "overdue_count": overdue_count,
+        "new_count": new_count,
+    }
+
+
+async def coverage() -> dict:
+    """题库全局覆盖视角:各方向已覆盖/未覆盖高频题统计(数据源是 episode.covers 并集)。"""
+    async with session() as s:
+        result = await s.execute(
+            select(Topic.direction, Episode.covers)
+            .join(Plan, Plan.topic_id == Topic.id)
+            .join(Episode, Episode.plan_id == Plan.id)
+        )
+        covered_by_direction: dict[str, set[str]] = {}
+        for direction, covers_raw in result:
+            covered_by_direction.setdefault(direction, set()).update(
+                str(qid) for qid in _safe_json_list(covers_raw)
+            )
+
+    directions = []
+    for direction in DIRECTION_NAMES:  # 只输出题库文件存在的方向
+        bank = get_question_bank(direction)
+        if not bank:
+            continue
+        covered_ids = covered_by_direction.get(direction, set())
+        covered_count = sum(1 for q in bank if str(q.get("id")) in covered_ids)
+        total = len(bank)
+        uncovered_high = [
+            {"id": q.get("id"), "question": q.get("question", "")}
+            for q in bank
+            if q.get("frequency") == "high" and str(q.get("id")) not in covered_ids
+        ][:20]
+        directions.append({
+            "direction": direction,
+            "name": DIRECTION_NAMES[direction],
+            "total": total,
+            "covered": covered_count,
+            "percent": round(covered_count * 100 / total) if total else 0,
+            "uncovered_high": uncovered_high,
+        })
+    return {"directions": directions}
 
 
 async def weak_points() -> list[dict]:

@@ -97,6 +97,7 @@ class ScriptOut(BaseModel):
     episode_id: int
     content_md: str
     knowledge: list[str]
+    references: list[dict] = []      # 集级参考链接(题库题 refs 汇总);旧脚本为 []
     review: dict | None = None   # 事实审稿结果,文件态透传(docs/07 §3.1);旧脚本无此字段
     errata: list[dict] = []      # 勘误历史(docs/07 §5)
 
@@ -332,10 +333,17 @@ async def get_script(episode_id: int) -> dict:
     # review/errata 走文件态(DB 不存审稿结果,docs/07 §3.1)
     ep = await library_service.get_episode(episode_id)
     file_script = scriptwriter.load_script(ep.ext_id) if ep else None
+    try:
+        references = json.loads(script.refs) if script.refs else []
+        if not isinstance(references, list):
+            references = []
+    except (TypeError, json.JSONDecodeError):
+        references = []
     return {
         "episode_id": episode_id,
         "content_md": script.content_md,
         "knowledge": json.loads(script.knowledge) if script.knowledge else [],
+        "references": references,
         "review": file_script.get("review") if file_script else None,
         "errata": artifacts.load_errata(ep.ext_id) if ep else [],
     }

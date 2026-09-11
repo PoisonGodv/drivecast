@@ -149,11 +149,13 @@ class PlannerGroundingTest(unittest.IsolatedAsyncioTestCase):
         settings.data_dir = self.old_data_dir
         self.tmp.cleanup()
 
-    async def test_planner_prompt_includes_top15_high_frequency_questions(self) -> None:
+    async def test_planner_prompt_includes_cluster_map_with_ids(self) -> None:
+        first_high = next(q for q in get_question_bank("backend_arch") if q["frequency"] == "high")
         fake_out = PlanOut(
             title="测试计划",
             episodes=[
-                EpisodeOutline(seq=1, title="集1", goal="g", objectives=["o"], outline="大纲"),
+                EpisodeOutline(seq=1, title="集1", goal="g", objectives=["o"], outline="大纲",
+                               covers=[first_high["id"], "杜撰id"]),
             ],
         )
         fake = FakeProvider(fake_out)
@@ -165,13 +167,19 @@ class PlannerGroundingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plan.title, "测试计划")
         self.assertEqual(len(fake.calls), 1)
         user = fake.calls[0]["user"]
-        self.assertIn("【方向高频面试题参考】", user)
-        # 高频题中第一题应被注入
-        first_high = next(q for q in get_question_bank("backend_arch") if q["frequency"] == "high")
+        self.assertIn("【题库题簇地图】", user)
+        # 高频题中第一题应连同题 id 一起被注入
         self.assertIn(first_high["question"], user)
-        # 计数: 按行号解析应至少 15 题
-        question_lines = [ln for ln in user.splitlines() if ln.strip().startswith(("1.", "2.", "15."))]
-        self.assertTrue(any("15." in ln for ln in question_lines), "应注入至少 15 道高频题")
+        self.assertIn(first_high["id"], user)
+        # 簇统计与已覆盖提示
+        self.assertIn("高频", user)
+        self.assertIn("已覆盖题 id 共", user)
+
+        # covers:只保留注入过的真实题 id,LLM 杜撰的被过滤;排期日为创建日
+        from datetime import date
+        ep = plan.episodes[0]
+        self.assertEqual(ep.covers, [first_high["id"]])
+        self.assertEqual(ep.scheduled_date, date.today().isoformat())
 
 
 class ScriptwriterGroundingTest(unittest.IsolatedAsyncioTestCase):
@@ -182,10 +190,14 @@ class ScriptwriterGroundingTest(unittest.IsolatedAsyncioTestCase):
         # 本组用例只测 grounding 注入,关掉审稿避免误触真实 LLM(docs/07 §3.1)
         self.old_reviewer_enabled = settings.reviewer_enabled
         settings.reviewer_enabled = False
+        # 参考猎手同理:关闭实时检索,write_script 直接走题库静态 refs
+        self.old_ref_hunter = settings.ref_hunter_enabled
+        settings.ref_hunter_enabled = False
 
     async def asyncTearDown(self) -> None:
         settings.data_dir = self.old_data_dir
         settings.reviewer_enabled = self.old_reviewer_enabled
+        settings.ref_hunter_enabled = self.old_ref_hunter
         self.tmp.cleanup()
 
     async def test_scriptwriter_prompt_includes_at_least_two_matched_questions(self) -> None:

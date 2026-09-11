@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, datetime, time
 from pathlib import Path
 
 from sqlalchemy import select, update
@@ -12,6 +13,35 @@ from sqlalchemy import select, update
 from .db import session
 from .models import Audio, Episode, Job, Plan, Question, ReviewReplay, Script, Topic
 from .schemas import PlanRec
+
+
+def _now() -> datetime:
+    """集中时钟入口,测试可替换,生产使用本地时间。"""
+    return datetime.now()
+
+
+def _dt_text(value: datetime) -> str:
+    # 与 library/service.py 的 _dt_text 一致:空格分隔,秒精度
+    return value.isoformat(sep=" ", timespec="seconds")
+
+
+def _initial_review_at(scheduled_date: str | None) -> str:
+    """新题首排期:所在集排期日当天 09:00;排期缺失/已过期则今天 09:00。
+
+    今天 09:00 已过就取当前时间,保证新题今天就能进入今日复习;
+    避免历史上一生成即 next_review_at=NULL 全部挤爆今日复习。
+    """
+    now = _now()
+    day: date | None = None
+    if scheduled_date:
+        try:
+            day = date.fromisoformat(scheduled_date)
+        except ValueError:
+            day = None
+    if day is None or day < now.date():
+        day = now.date()
+    target = datetime.combine(day, time(9, 0, 0))
+    return _dt_text(target if target > now else now)
 
 
 async def upsert_plan(plan: PlanRec) -> None:
@@ -41,27 +71,35 @@ async def upsert_plan(plan: PlanRec) -> None:
             await s.execute(update(Plan).where(Plan.id == plan_id).values(**values))
 
         for ep in plan.episodes:
+            covers_json = json.dumps(ep.covers, ensure_ascii=False)
+            scheduled_date = ep.scheduled_date or None
             exists = await s.scalar(select(Episode.id).where(Episode.ext_id == ep.episode_id))
             if exists is None:
                 s.add(Episode(
                     ext_id=ep.episode_id, plan_id=plan_id, seq=ep.seq, title=ep.title,
                     outline=ep.outline, objectives=json.dumps(ep.objectives, ensure_ascii=False),
                     script_format=ep.script_format, status=ep.status,
+                    scheduled_date=scheduled_date, covers=covers_json,
                 ))
             else:
                 await s.execute(
                     update(Episode).where(Episode.ext_id == ep.episode_id)
-                    .values(status=ep.status, title=ep.title, script_format=ep.script_format)
+                    .values(status=ep.status, title=ep.title, script_format=ep.script_format,
+                            scheduled_date=scheduled_date, covers=covers_json)
                 )
         await s.commit()
 
 
 async def upsert_script(ep_ext_id: str, data: dict) -> None:
-    """脚本 + 题库(docs/05 M2-5:question 随脚本一次产出,mastery=unknown)。"""
+    """脚本 + 题库(docs/05 M2-5:question 随脚本一次产出,mastery=unknown)。
+
+    新题按所在集排期日 09:00 起排(见 _initial_review_at),不再一律 NULL。
+    """
     async with session() as s:
-        ep_id = await s.scalar(select(Episode.id).where(Episode.ext_id == ep_ext_id))
-        if ep_id is None:
+        ep = await s.scalar(select(Episode).where(Episode.ext_id == ep_ext_id))
+        if ep is None:
             return  # plan 未入库(纯文件态运行),跳过双写
+        ep_id = ep.id
         # 先更新 Episode 状态:若已被删除栅栏标为 cancelled,则整笔写入作废,不插入残留行
         result = await s.execute(
             update(Episode).where(Episode.id == ep_id, Episode.status != "cancelled")
@@ -69,20 +107,24 @@ async def upsert_script(ep_ext_id: str, data: dict) -> None:
         )
         if result.rowcount == 0:
             return
+        refs_json = json.dumps(data.get("references", []), ensure_ascii=False)
         exists = await s.scalar(select(Script.id).where(Script.episode_id == ep_id))
         if exists is None:
             s.add(Script(episode_id=ep_id, content_md=data["content"],
                          knowledge=json.dumps(data.get("knowledge", []), ensure_ascii=False),
+                         refs=refs_json,
                          token_usage=data.get("usage_tokens", 0)))
         else:
             await s.execute(
                 update(Script).where(Script.episode_id == ep_id)
                 .values(content_md=data["content"],
                         knowledge=json.dumps(data.get("knowledge", []), ensure_ascii=False),
+                        refs=refs_json,
                         token_usage=data.get("usage_tokens", 0))
             )
             from sqlalchemy import delete
             await s.execute(delete(Question).where(Question.episode_id == ep_id))
+        first_review = _initial_review_at(ep.scheduled_date)  # 重生成重建同样按排期起排
         knowledge = [str(item).strip() for item in data.get("knowledge", []) if str(item).strip()]
         default_kp = f"episode:{ep_id}"
         if knowledge:
@@ -94,6 +136,7 @@ async def upsert_script(ep_ext_id: str, data: dict) -> None:
                 question=q["question"],
                 framework=json.dumps(q.get("framework", []), ensure_ascii=False),
                 difficulty=q.get("difficulty", "medium"),
+                next_review_at=first_review,
             ))
         await s.commit()
 

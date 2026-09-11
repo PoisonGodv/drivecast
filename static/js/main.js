@@ -6,10 +6,10 @@
  */
 
 import { createApp, reactive } from '../vendor/petite-vue.js'
-import { api, connectPlanEvents } from './api.js?v=20260910-async'
-import { player, loadEpisode, togglePlay, seek, seekToRatio, cycleRate, toggleTranscript, formatTime } from './player.js?v=20260910-async'
-import { store } from './store.js?v=20260910-async'
-import { useReview, isDue, formatDate, masteryLabels, directionNames } from './review.js?v=20260910-async'
+import { api, connectPlanEvents } from './api.js?v=20260911'
+import { player, loadEpisode, togglePlay, seek, seekToRatio, cycleRate, toggleTranscript, formatTime } from './player.js?v=20260911'
+import { store } from './store.js?v=20260911'
+import { useReview, isDue, formatDate, masteryLabels, directionNames } from './review.js?v=20260911'
 
 const DIRECTIONS = [
   { key: 'backend_arch', label: '后端/架构面试' },

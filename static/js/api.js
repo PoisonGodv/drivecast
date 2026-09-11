@@ -89,6 +89,12 @@ export const api = {
   // 复习
   getReviewToday: () => request('/api/review/today'),
 
+  // 遗忘曲线排期:今日新学集 + 到期/逾期/新题计数(docs 复习契约)
+  getReviewDaily: () => request('/api/review/daily'),
+
+  // 全局覆盖仪表盘:各方向已覆盖/未覆盖高频题
+  getReviewCoverage: () => request('/api/review/coverage'),
+
   getReviewWeakPoints: () => request('/api/review/weak-points'),
 
   getReviewReplayQueue: () => request('/api/review/replay-queue'),

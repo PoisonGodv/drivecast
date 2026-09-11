@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     target_minutes: int = 15
     words_per_minute: int = 300     # rate=-5% 实测 280-320,合成后 ffprobe 回填校准
     default_episode_count: int = 6
+    daily_new_episodes: int = 1     # 每日新学集数:计划排期按 (seq-1)//N 天递进
+
+    # ---- 参考链接猎手(docs/07 §1.4)----
+    ref_hunter_enabled: bool = True  # 生成脚本时实时检索参考链接;False 退回题库静态 refs
+    ref_search_provider: str = ""    # 实时搜索:tavily / bing;空=不联网搜(仍走 LLM 提名+校验)
+    ref_search_api_key: str = ""
+    ref_verify_timeout: int = 8      # 链接存活校验/搜索的单次请求超时(秒)
+    ref_max_results: int = 8         # 每集参考链接上限
 
     # ---- Web(docs/04 §5 / docs/05 M3) ----
     web_host: str = "127.0.0.1"          # 仅绑本地,无鉴权单用户

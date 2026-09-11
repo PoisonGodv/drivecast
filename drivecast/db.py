@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from sqlalchemy import event, inspect, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
@@ -11,12 +12,19 @@ from .config import settings
 
 _engine: AsyncEngine | None = None
 _session: async_sessionmaker | None = None
+_engine_data_dir: Path | None = None
 
 
 def get_engine() -> AsyncEngine:
-    global _engine, _session
+    global _engine, _session, _engine_data_dir
+    if _engine is not None and _engine_data_dir != settings.data_dir:
+        # 数据目录切换(测试常换 tmp 目录):旧引擎指向已删除目录,继续复用会
+        # 在 WAL 写入时报 disk I/O error(unlink 后 -wal 文件无处创建)。
+        # 这里同步弃用,不 await dispose;旧连接由 GC 收尾,进程内无害。
+        _engine = _session = None
     if _engine is None:
-        url = f"sqlite+aiosqlite:///{settings.data_dir / 'drivecast.db'}"
+        _engine_data_dir = Path(settings.data_dir)
+        url = f"sqlite+aiosqlite:///{_engine_data_dir / 'drivecast.db'}"
         _engine = create_async_engine(url, echo=False)
 
         @event.listens_for(_engine.sync_engine, "connect")
@@ -60,6 +68,8 @@ def _missing_runtime_schema(sync_conn) -> list[str]:
     required = {
         "question": {"last_reviewed_at"},
         "audio": {"meta_json", "quality_status"},
+        "episode": {"scheduled_date", "covers"},
+        "script": {"refs"},
     }
     missing: list[str] = []
     for table, columns in required.items():
@@ -71,7 +81,8 @@ def _missing_runtime_schema(sync_conn) -> list[str]:
 
 
 async def close_db() -> None:
-    global _engine, _session
+    global _engine, _session, _engine_data_dir
     if _engine is not None:
         await _engine.dispose()
         _engine = _session = None
+        _engine_data_dir = None

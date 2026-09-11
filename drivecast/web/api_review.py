@@ -29,6 +29,18 @@ class InterviewDateBody(BaseModel):
     interview_date: date | None
 
 
+@router.get("/review/daily")
+async def review_daily() -> dict:
+    """今日学习视图:今天排期的新集 + 复习题到期/逾期/未排期统计。"""
+    return await library_service.daily_plan()
+
+
+@router.get("/review/coverage")
+async def review_coverage() -> dict:
+    """题库全局覆盖视角:各方向覆盖进度与未覆盖高频题清单。"""
+    return await library_service.coverage()
+
+
 @router.get("/review/today")
 async def review_today(
     mastery: Literal["unknown", "fuzzy", "mastered"] | None = Query(

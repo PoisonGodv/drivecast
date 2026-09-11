@@ -1,7 +1,7 @@
 {
   "direction": "source_dive",
-  "version": 1,
-  "updated_at": "2026-09-01",
+  "version": 2,
+  "updated_at": "2026-09-11",
   "questions": [
     {
       "id": "sd-0001",
@@ -12,7 +12,21 @@
       ],
       "frequency": "high",
       "source": "Go 源码 / 牛客2026 Go 面经",
-      "notes": "work-stealing 触发条件"
+      "notes": "work-stealing 触发条件",
+      "refs": [
+        {
+          "title": "runtime/proc.go - go.dev",
+          "url": "https://go.dev/src/runtime/proc.go"
+        },
+        {
+          "title": "golang/go: src/runtime/proc.go",
+          "url": "https://github.com/golang/go/blob/master/src/runtime/proc.go"
+        },
+        {
+          "title": "Scalable Go Scheduler Design Doc",
+          "url": "https://go.dev/s/go11sched"
+        }
+      ]
     },
     {
       "id": "sd-0002",
@@ -23,7 +37,21 @@
       ],
       "frequency": "high",
       "source": "Go 源码 / 牛客2026 Go 面经",
-      "notes": "负载因子/溢出桶/hmap.oldbuckets"
+      "notes": "负载因子/溢出桶/hmap.oldbuckets",
+      "refs": [
+        {
+          "title": "runtime/map.go - go.dev",
+          "url": "https://go.dev/src/runtime/map.go"
+        },
+        {
+          "title": "golang/go: src/runtime/map.go",
+          "url": "https://github.com/golang/go/blob/master/src/runtime/map.go"
+        },
+        {
+          "title": "Go maps in action - The Go Blog",
+          "url": "https://go.dev/blog/maps"
+        }
+      ]
     },
     {
       "id": "sd-0003",
@@ -34,7 +62,17 @@
       ],
       "frequency": "high",
       "source": "Redis 源码 / 牛客2026面经",
-      "notes": "dictRehashStep/定时 rehash"
+      "notes": "dictRehashStep/定时 rehash",
+      "refs": [
+        {
+          "title": "redis/redis: src/dict.c",
+          "url": "https://github.com/redis/redis/blob/unstable/src/dict.c"
+        },
+        {
+          "title": "redis/redis: src/dict.h",
+          "url": "https://github.com/redis/redis/blob/unstable/src/dict.h"
+        }
+      ]
     },
     {
       "id": "sd-0004",
@@ -45,7 +83,17 @@
       ],
       "frequency": "high",
       "source": "Redis 源码 / 牛客2026面经",
-      "notes": "O(1) 长度/预分配/二进制安全"
+      "notes": "O(1) 长度/预分配/二进制安全",
+      "refs": [
+        {
+          "title": "redis/redis: src/sds.h",
+          "url": "https://github.com/redis/redis/blob/unstable/src/sds.h"
+        },
+        {
+          "title": "redis/redis: src/sds.c",
+          "url": "https://github.com/redis/redis/blob/unstable/src/sds.c"
+        }
+      ]
     },
     {
       "id": "sd-0005",
@@ -56,7 +104,21 @@
       ],
       "frequency": "high",
       "source": "etcd 源码 / 牛客2026面经",
-      "notes": "心跳确认 applied index"
+      "notes": "心跳确认 applied index",
+      "refs": [
+        {
+          "title": "etcd-io/raft",
+          "url": "https://github.com/etcd-io/raft"
+        },
+        {
+          "title": "etcd-io/raft: read_only.go",
+          "url": "https://github.com/etcd-io/raft/blob/main/read_only.go"
+        },
+        {
+          "title": "etcd documentation: API guarantees",
+          "url": "https://etcd.io/docs/v3.6/learning/api_guarantees/"
+        }
+      ]
     },
     {
       "id": "sd-0006",
@@ -67,7 +129,17 @@
       ],
       "frequency": "mid",
       "source": "Linux 源码 / 牛客2026面经",
-      "notes": "LT/ET;就绪链表"
+      "notes": "LT/ET;就绪链表",
+      "refs": [
+        {
+          "title": "torvalds/linux: fs/eventpoll.c",
+          "url": "https://github.com/torvalds/linux/blob/master/fs/eventpoll.c"
+        },
+        {
+          "title": "epoll(7) - Linux manual page",
+          "url": "https://man7.org/linux/man-pages/man7/epoll.7.html"
+        }
+      ]
     },
     {
       "id": "sd-0007",
@@ -78,7 +150,17 @@
       ],
       "frequency": "mid",
       "source": "Linux 源码 / 牛客2026面经",
-      "notes": "防止旧连接报文干扰新连接"
+      "notes": "防止旧连接报文干扰新连接",
+      "refs": [
+        {
+          "title": "torvalds/linux: net/ipv4/tcp_minisocks.c",
+          "url": "https://github.com/torvalds/linux/blob/master/net/ipv4/tcp_minisocks.c"
+        },
+        {
+          "title": "RFC 793: Transmission Control Protocol",
+          "url": "https://datatracker.ietf.org/doc/html/rfc793"
+        }
+      ]
     },
     {
       "id": "sd-0008",
@@ -89,7 +171,17 @@
       ],
       "frequency": "high",
       "source": "Go 源码 / 牛客2026 Go 面经",
-      "notes": "starvationThresholdNs"
+      "notes": "starvationThresholdNs",
+      "refs": [
+        {
+          "title": "sync/mutex.go - go.dev",
+          "url": "https://go.dev/src/sync/mutex.go"
+        },
+        {
+          "title": "golang/go: src/sync/mutex.go",
+          "url": "https://github.com/golang/go/blob/master/src/sync/mutex.go"
+        }
+      ]
     },
     {
       "id": "sd-0009",
@@ -100,7 +192,21 @@
       ],
       "frequency": "mid",
       "source": "MySQL 源码 / 牛客2026面经",
-      "notes": "解析/优化/执行/存储引擎"
+      "notes": "解析/优化/执行/存储引擎",
+      "refs": [
+        {
+          "title": "mysql/mysql-server",
+          "url": "https://github.com/mysql/mysql-server"
+        },
+        {
+          "title": "MySQL 8.4 Reference Manual: Optimizing SQL Statements",
+          "url": "https://dev.mysql.com/doc/refman/8.4/en/optimization.html"
+        },
+        {
+          "title": "MySQL Internals Manual",
+          "url": "https://dev.mysql.com/doc/internals/en/"
+        }
+      ]
     },
     {
       "id": "sd-0010",
@@ -111,7 +217,21 @@
       ],
       "frequency": "mid",
       "source": "Kafka 源码 / 牛客2026面经",
-      "notes": "RecordAccumulator/NetworkClient"
+      "notes": "RecordAccumulator/NetworkClient",
+      "refs": [
+        {
+          "title": "apache/kafka",
+          "url": "https://github.com/apache/kafka"
+        },
+        {
+          "title": "Apache Kafka Documentation: Design",
+          "url": "https://kafka.apache.org/documentation/#design"
+        },
+        {
+          "title": "Apache Kafka Documentation: Producer Configs",
+          "url": "https://kafka.apache.org/documentation/#producerconfigs"
+        }
+      ]
     },
     {
       "id": "sd-0011",
@@ -122,7 +242,21 @@
       ],
       "frequency": "mid",
       "source": "vLLM 源码 / 2026大模型面试题库",
-      "notes": "逻辑块到物理块映射"
+      "notes": "逻辑块到物理块映射",
+      "refs": [
+        {
+          "title": "vllm-project/vllm",
+          "url": "https://github.com/vllm-project/vllm"
+        },
+        {
+          "title": "Efficient Memory Management for Large Language Model Serving with PagedAttention",
+          "url": "https://arxiv.org/abs/2309.06180"
+        },
+        {
+          "title": "vLLM Documentation",
+          "url": "https://docs.vllm.ai/en/latest/"
+        }
+      ]
     },
     {
       "id": "sd-0012",
@@ -133,7 +267,21 @@
       ],
       "frequency": "mid",
       "source": "HuggingFace 源码 / 2026大模型面试题库",
-      "notes": "GenerationMixin.sample"
+      "notes": "GenerationMixin.sample",
+      "refs": [
+        {
+          "title": "huggingface/transformers",
+          "url": "https://github.com/huggingface/transformers"
+        },
+        {
+          "title": "Transformers documentation: Generation",
+          "url": "https://huggingface.co/docs/transformers/en/main_classes/text_generation"
+        },
+        {
+          "title": "How to generate - Hugging Face Blog",
+          "url": "https://huggingface.co/blog/how-to-generate"
+        }
+      ]
     },
     {
       "id": "sd-0013",
@@ -144,7 +292,17 @@
       ],
       "frequency": "high",
       "source": "Go 源码 / 牛客2026 Go 面经",
-      "notes": "hchan.sendq/recvq"
+      "notes": "hchan.sendq/recvq",
+      "refs": [
+        {
+          "title": "runtime/chan.go - go.dev",
+          "url": "https://go.dev/src/runtime/chan.go"
+        },
+        {
+          "title": "golang/go: src/runtime/chan.go",
+          "url": "https://github.com/golang/go/blob/master/src/runtime/chan.go"
+        }
+      ]
     },
     {
       "id": "sd-0014",
@@ -155,7 +313,17 @@
       ],
       "frequency": "mid",
       "source": "Redis 源码 / 牛客2026面经",
-      "notes": "zset-max-ziplist-entries"
+      "notes": "zset-max-ziplist-entries",
+      "refs": [
+        {
+          "title": "redis/redis: src/t_zset.c",
+          "url": "https://github.com/redis/redis/blob/unstable/src/t_zset.c"
+        },
+        {
+          "title": "Redis docs: Sorted sets",
+          "url": "https://redis.io/docs/latest/develop/data-types/sorted-sets/"
+        }
+      ]
     },
     {
       "id": "sd-0015",
@@ -166,7 +334,21 @@
       ],
       "frequency": "mid",
       "source": "etcd 源码 / 牛客2026面经",
-      "notes": "revision 索引/watchableStore"
+      "notes": "revision 索引/watchableStore",
+      "refs": [
+        {
+          "title": "etcd-io/bbolt",
+          "url": "https://github.com/etcd-io/bbolt"
+        },
+        {
+          "title": "etcd-io/etcd",
+          "url": "https://github.com/etcd-io/etcd"
+        },
+        {
+          "title": "etcd documentation: Learning",
+          "url": "https://etcd.io/docs/v3.6/learning/api/"
+        }
+      ]
     },
     {
       "id": "sd-0016",
@@ -177,7 +359,17 @@
       ],
       "frequency": "low",
       "source": "Linux 源码 / 牛客2026面经",
-      "notes": "红黑树/权重"
+      "notes": "红黑树/权重",
+      "refs": [
+        {
+          "title": "Linux kernel documentation: CFS Scheduler",
+          "url": "https://www.kernel.org/doc/html/latest/scheduler/sched-design-CFS.html"
+        },
+        {
+          "title": "torvalds/linux: kernel/sched/fair.c",
+          "url": "https://github.com/torvalds/linux/blob/master/kernel/sched/fair.c"
+        }
+      ]
     },
     {
       "id": "sd-0017",
@@ -188,7 +380,21 @@
       ],
       "frequency": "low",
       "source": "开源模型源码 / 2026大模型面试题库",
-      "notes": "去均值/保留缩放"
+      "notes": "去均值/保留缩放",
+      "refs": [
+        {
+          "title": "Root Mean Square Layer Normalization (arXiv:1910.07467)",
+          "url": "https://arxiv.org/abs/1910.07467"
+        },
+        {
+          "title": "LLaMA: Open and Efficient Foundation Language Models (arXiv:2302.13971)",
+          "url": "https://arxiv.org/abs/2302.13971"
+        },
+        {
+          "title": "meta-llama/llama",
+          "url": "https://github.com/meta-llama/llama"
+        }
+      ]
     },
     {
       "id": "sd-0018",
@@ -199,7 +405,151 @@
       ],
       "frequency": "mid",
       "source": "Go 源码 / 牛客2026 Go 面经",
-      "notes": "hybrid write barrier"
+      "notes": "hybrid write barrier",
+      "refs": [
+        {
+          "title": "A Guide to the Go Garbage Collector - go.dev",
+          "url": "https://go.dev/doc/gc-guide"
+        },
+        {
+          "title": "runtime/mgc.go - go.dev",
+          "url": "https://go.dev/src/runtime/mgc.go"
+        },
+        {
+          "title": "golang/go: src/runtime/mgc.go",
+          "url": "https://github.com/golang/go/blob/master/src/runtime/mgc.go"
+        }
+      ]
+    },
+    {
+      "id": "sd-0019",
+      "question": "Go 1.24 把 map 底层换成 Swiss Table,相比旧的 hmap/bmap 实现改了什么?面试会问哪些点?",
+      "topic": [
+        "go",
+        "map"
+      ],
+      "frequency": "high",
+      "source": "Go 1.24 Release / 牛客2026 Go 面经",
+      "notes": "Swiss Table/控制字节/SIMD 分组探测",
+      "refs": [
+        {
+          "title": "Go 1.24 Release Notes - go.dev",
+          "url": "https://go.dev/doc/go1.24"
+        },
+        {
+          "title": "Faster Go maps with Swiss Tables - The Go Blog",
+          "url": "https://go.dev/blog/swisstable"
+        },
+        {
+          "title": "golang/go: src/internal/runtime/maps/table.go",
+          "url": "https://github.com/golang/go/blob/master/src/internal/runtime/maps/table.go"
+        }
+      ]
+    },
+    {
+      "id": "sd-0020",
+      "question": "Go sync.Map 源码里 read 和 dirty 两个 map 如何分工?什么时候发生 dirty 提升(promote)?",
+      "topic": [
+        "go",
+        "sync"
+      ],
+      "frequency": "high",
+      "source": "Go 源码 / 牛客2026 Go 面经",
+      "notes": "misses 计数/expunged/双重检查",
+      "refs": [
+        {
+          "title": "sync/map.go - go.dev",
+          "url": "https://go.dev/src/sync/map.go"
+        },
+        {
+          "title": "golang/go: src/sync/map.go",
+          "url": "https://github.com/golang/go/blob/master/src/sync/map.go"
+        }
+      ]
+    },
+    {
+      "id": "sd-0021",
+      "question": "Redis 7 为什么用 listpack 全面替换 ziplist?级联更新问题在源码里怎么体现的?",
+      "topic": [
+        "redis",
+        "源码"
+      ],
+      "frequency": "high",
+      "source": "Redis 源码 / 牛客2026面经",
+      "notes": "ziplist 级联更新/listpack 无 prevlen 依赖",
+      "refs": [
+        {
+          "title": "redis/redis: src/listpack.c",
+          "url": "https://github.com/redis/redis/blob/unstable/src/listpack.c"
+        },
+        {
+          "title": "Redis docs: Lists",
+          "url": "https://redis.io/docs/latest/develop/data-types/lists/"
+        }
+      ]
+    },
+    {
+      "id": "sd-0022",
+      "question": "MySQL InnoDB 的 MVCC 在源码层面怎么实现?ReadView 如何判断一个版本是否可见?",
+      "topic": [
+        "mysql",
+        "mvcc"
+      ],
+      "frequency": "high",
+      "source": "MySQL 源码 / 牛客2026面经",
+      "notes": "ReadView/TRX_ID/roll_ptr/undo 版本链",
+      "refs": [
+        {
+          "title": "MySQL 8.4 Reference Manual: InnoDB Multi-Versioning",
+          "url": "https://dev.mysql.com/doc/refman/8.4/en/innodb-multi-versioning.html"
+        },
+        {
+          "title": "mysql/mysql-server",
+          "url": "https://github.com/mysql/mysql-server"
+        }
+      ]
+    },
+    {
+      "id": "sd-0023",
+      "question": "Kafka 为什么用 KRaft 去掉 ZooKeeper?KRaft 模式下集群元数据怎么同步?",
+      "topic": [
+        "kafka",
+        "kraft"
+      ],
+      "frequency": "mid",
+      "source": "Kafka 源码 / 2026面经",
+      "notes": "KIP-500/Kafka 4.0 正式移除 ZK/元数据日志复制",
+      "refs": [
+        {
+          "title": "Apache Kafka Documentation: KRaft",
+          "url": "https://kafka.apache.org/documentation/#kraft"
+        },
+        {
+          "title": "apache/kafka",
+          "url": "https://github.com/apache/kafka"
+        }
+      ]
+    },
+    {
+      "id": "sd-0024",
+      "question": "io_uring 相比 epoll 在原理上解决了什么问题?为什么适合高并发 IO 场景?",
+      "topic": [
+        "linux",
+        "io_uring"
+      ],
+      "frequency": "mid",
+      "source": "Linux 源码 / 牛客2026面经",
+      "notes": "共享环形缓冲区/批量提交/零拷贝轮询",
+      "refs": [
+        {
+          "title": "io_uring(7) - Linux manual page",
+          "url": "https://man7.org/linux/man-pages/man7/io_uring.7.html"
+        },
+        {
+          "title": "torvalds/linux: io_uring/",
+          "url": "https://github.com/torvalds/linux/tree/master/io_uring"
+        }
+      ]
     }
   ]
 }

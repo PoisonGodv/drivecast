@@ -403,6 +403,141 @@
   flex: 0 0 auto;
 }
 
+/* 今日新学:遗忘曲线排期的每日 1 集入口,与重听任务同构的横向卡片 */
+.daily-episode-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.daily-episode {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(15, 17, 21, 0.45);
+}
+
+.daily-episode-main {
+  min-width: 0;
+}
+
+.daily-episode-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+}
+
+.daily-episode h3 {
+  margin: 8px 0 3px;
+  font-size: 0.98rem;
+}
+
+.daily-episode p {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.daily-episode > .btn,
+.daily-episode > .replay-unavailable {
+  flex: 0 0 auto;
+}
+
+/* 方向覆盖仪表盘:复用 components.css 的 progress-bar,只收高度 */
+.coverage-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.coverage-item {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(15, 17, 21, 0.45);
+}
+
+.coverage-item-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.9rem;
+}
+
+.coverage-item-head span {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.coverage-progress {
+  height: 6px;
+  margin-top: 10px;
+}
+
+.coverage-toggle {
+  margin-top: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--review-accent);
+  font-size: 0.78rem;
+}
+
+.coverage-clear {
+  display: block;
+  margin-top: 10px;
+  color: var(--success);
+  font-size: 0.78rem;
+}
+
+.coverage-questions {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+/* 题卡参考链接:翻面后的弱化展示,不抢答题框架的视觉层级 */
+.card-references {
+  margin: 0 0 12px;
+}
+
+.card-references-title {
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.card-references a {
+  display: block;
+  overflow: hidden;
+  color: var(--review-accent);
+  font-size: 0.76rem;
+  opacity: 0.82;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-references a + a {
+  margin-top: 4px;
+}
+
 .review-queue-summary {
   min-width: 58px;
   text-align: right;
@@ -650,6 +785,16 @@
 
   .replay-task > .btn,
   .replay-task > .replay-unavailable {
+    align-self: flex-start;
+  }
+
+  .daily-episode {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .daily-episode > .btn,
+  .daily-episode > .replay-unavailable {
     align-self: flex-start;
   }
 

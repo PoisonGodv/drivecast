@@ -103,10 +103,14 @@ class WriteScriptReviewTest(unittest.IsolatedAsyncioTestCase):
         settings.data_dir = Path(self.tmp.name)
         self.old_reviewer = settings.reviewer_enabled
         settings.reviewer_enabled = True
+        # 参考猎手走真实 LLM/网络,测试里关掉,不影响审稿接线断言
+        self.old_ref_hunter = settings.ref_hunter_enabled
+        settings.ref_hunter_enabled = False
 
     async def asyncTearDown(self) -> None:
         settings.data_dir = self.old_data_dir
         settings.reviewer_enabled = self.old_reviewer
+        settings.ref_hunter_enabled = self.old_ref_hunter
         reviewer_service._set_provider(None)
         self.tmp.cleanup()
 
@@ -276,6 +280,9 @@ class WorkerBlockedChainTest(unittest.TestCase):
         settings.data_dir = Path(self.tmp.name)
         self.old_reviewer = settings.reviewer_enabled
         settings.reviewer_enabled = True
+        # 参考猎手会真调 LLM/网络;本组只测 block→重试→failed 链路,关掉
+        self.old_ref_hunter = settings.ref_hunter_enabled
+        settings.ref_hunter_enabled = False
         asyncio.run(db.init_db())
 
         plan_rec = PlanRec(plan_id="plan_chain", title="分布式锁", direction="backend_arch",
@@ -289,6 +296,7 @@ class WorkerBlockedChainTest(unittest.TestCase):
     def tearDown(self) -> None:
         settings.data_dir = self.old_data_dir
         settings.reviewer_enabled = self.old_reviewer
+        settings.ref_hunter_enabled = self.old_ref_hunter
         reviewer_service._set_provider(None)
         asyncio.run(db.close_db())
         self.tmp.cleanup()

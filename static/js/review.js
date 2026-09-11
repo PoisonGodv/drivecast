@@ -6,7 +6,7 @@
  */
 
 import { reactive } from '../vendor/petite-vue.js'
-import { api } from './api.js?v=20260903-del'
+import { api } from './api.js?v=20260911'
 
 const SPRINT_STORAGE_PREFIX = 'drivecast.review.sprint.completed.'
 
@@ -133,15 +133,25 @@ export function useReview() {
     savedInterviewDate: '',
     sprintCompleted: {},
 
+    // 遗忘曲线排期:今日新学集与到期/逾期/新题摘要
+    daily: { date: '', new_episodes: [], due_count: 0, overdue_count: 0, new_count: 0 },
+    // 方向覆盖仪表盘
+    coverage: [],
+    coverageExpanded: {},
+
     loading: false,
     recommendationsLoading: false,
     replayQueueLoading: false,
     sprintLoading: false,
+    dailyLoading: false,
+    coverageLoading: false,
     dateSaving: false,
     error: '',
     recommendationsError: '',
     replayQueueError: '',
     sprintError: '',
+    dailyError: '',
+    coverageError: '',
     dateError: '',
     notice: '',
 
@@ -234,8 +244,57 @@ export function useReview() {
         this.loadInterviewDate(),
         this.loadRecommendations(),
         this.loadReplayQueue(),
+        this.loadDaily(),
+        this.loadCoverage(),
       ])
       await this.loadSprint()
+    },
+
+    async loadDaily() {
+      this.dailyLoading = true
+      this.dailyError = ''
+      try {
+        const data = await api.getReviewDaily()
+        // 旧后端/缺字段容错:逐项兜底,单个计数缺失不拖垮整个面板
+        this.daily = {
+          date: data?.date || '',
+          new_episodes: listFrom(data, ['new_episodes']),
+          due_count: Number(data?.due_count) || 0,
+          overdue_count: Number(data?.overdue_count) || 0,
+          new_count: Number(data?.new_count) || 0,
+        }
+      } catch (err) {
+        this.daily = { date: '', new_episodes: [], due_count: 0, overdue_count: 0, new_count: 0 }
+        this.dailyError = err.message
+      } finally {
+        this.dailyLoading = false
+      }
+    },
+
+    async loadCoverage() {
+      this.coverageLoading = true
+      this.coverageError = ''
+      try {
+        const data = await api.getReviewCoverage()
+        this.coverage = listFrom(data, ['directions']).map((dir) => ({
+          direction: dir?.direction || 'other',
+          name: dir?.name || '',
+          total: Number(dir?.total) || 0,
+          covered: Number(dir?.covered) || 0,
+          // percent 钳制在 0~100,防止后端脏数据把进度条撑破
+          percent: Math.max(0, Math.min(100, Number(dir?.percent) || 0)),
+          uncovered_high: Array.isArray(dir?.uncovered_high) ? dir.uncovered_high : [],
+        }))
+      } catch (err) {
+        this.coverage = []
+        this.coverageError = err.message
+      } finally {
+        this.coverageLoading = false
+      }
+    },
+
+    toggleCoverage(direction) {
+      this.coverageExpanded[direction] = !this.coverageExpanded[direction]
     },
 
     async hydratePlanIds(items) {
@@ -475,6 +534,9 @@ export function useReview() {
     state,
     load: () => state.load(),
     loadReplayQueue: () => state.loadReplayQueue(),
+    loadDaily: () => state.loadDaily(),
+    loadCoverage: () => state.loadCoverage(),
+    toggleCoverage: (direction) => state.toggleCoverage(direction),
     toggleFlip: (id) => state.toggleFlip(id),
     grade: (id, mastery) => state.grade(id, mastery),
     dueStatus,

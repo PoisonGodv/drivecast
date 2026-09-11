@@ -1,7 +1,7 @@
 {
   "direction": "tech_news",
-  "version": 1,
-  "updated_at": "2026-09-01",
+  "version": 2,
+  "updated_at": "2026-09-11",
   "questions": [
     {
       "id": "tn-0001",
@@ -11,7 +11,21 @@
       ],
       "frequency": "high",
       "source": "drivecast 方向设计",
-      "notes": "事实→影响→判断→待观察"
+      "notes": "事实→影响→判断→待观察",
+      "refs": [
+        {
+          "title": "GPT-5.1: A smarter, more conversational ChatGPT - OpenAI",
+          "url": "https://openai.com/index/gpt-5-1/"
+        },
+        {
+          "title": "Claude Opus 4.5 - Claude Platform Docs",
+          "url": "https://platform.claude.com/docs/en/models/opus-4-5/overview"
+        },
+        {
+          "title": "deepseek-ai/DeepSeek-R1",
+          "url": "https://github.com/deepseek-ai/DeepSeek-R1"
+        }
+      ]
     },
     {
       "id": "tn-0002",
@@ -21,7 +35,21 @@
       ],
       "frequency": "high",
       "source": "drivecast 方向设计",
-      "notes": "测试集污染/评测维度/落地成本"
+      "notes": "测试集污染/评测维度/落地成本",
+      "refs": [
+        {
+          "title": "Chatbot Arena: An Open Platform for Evaluating LLMs by Human Preference (arXiv:2403.04132)",
+          "url": "https://arxiv.org/abs/2403.04132"
+        },
+        {
+          "title": "LMArena",
+          "url": "https://lmarena.ai/"
+        },
+        {
+          "title": "Holistic Evaluation of Language Models (HELM) - Stanford CRFM",
+          "url": "https://crfm.stanford.edu/helm/latest/"
+        }
+      ]
     },
     {
       "id": "tn-0003",
@@ -32,7 +60,21 @@
       ],
       "frequency": "high",
       "source": "2026大模型面试题库",
-      "notes": "工具生态标准化;待人工复核"
+      "notes": "工具生态标准化;待人工复核",
+      "refs": [
+        {
+          "title": "Model Context Protocol: Introduction",
+          "url": "https://modelcontextprotocol.io/introduction"
+        },
+        {
+          "title": "Introducing the Model Context Protocol - Anthropic",
+          "url": "https://www.anthropic.com/news/model-context-protocol"
+        },
+        {
+          "title": "modelcontextprotocol - GitHub",
+          "url": "https://github.com/modelcontextprotocol"
+        }
+      ]
     },
     {
       "id": "tn-0004",
@@ -42,7 +84,21 @@
       ],
       "frequency": "mid",
       "source": "drivecast 方向设计",
-      "notes": "延迟/功耗/精度/部署成本"
+      "notes": "延迟/功耗/精度/部署成本",
+      "refs": [
+        {
+          "title": "ggerganov/llama.cpp",
+          "url": "https://github.com/ggerganov/llama.cpp"
+        },
+        {
+          "title": "ml-explore/mlx - Apple",
+          "url": "https://github.com/ml-explore/mlx"
+        },
+        {
+          "title": "Google AI Edge",
+          "url": "https://ai.google.dev/edge"
+        }
+      ]
     },
     {
       "id": "tn-0005",
@@ -52,7 +108,21 @@
       ],
       "frequency": "mid",
       "source": "drivecast 方向设计",
-      "notes": "成本/可控性/合规"
+      "notes": "成本/可控性/合规",
+      "refs": [
+        {
+          "title": "deepseek-ai/DeepSeek-V3",
+          "url": "https://github.com/deepseek-ai/DeepSeek-V3"
+        },
+        {
+          "title": "DeepSeek-V3 Technical Report (arXiv:2412.19437)",
+          "url": "https://arxiv.org/abs/2412.19437"
+        },
+        {
+          "title": "Llama - Meta AI",
+          "url": "https://ai.meta.com/llama/"
+        }
+      ]
     },
     {
       "id": "tn-0006",
@@ -62,7 +132,21 @@
       ],
       "frequency": "mid",
       "source": "drivecast 方向设计",
-      "notes": "存储/预处理/延迟/成本"
+      "notes": "存储/预处理/延迟/成本",
+      "refs": [
+        {
+          "title": "Hello GPT-4o - OpenAI",
+          "url": "https://openai.com/index/hello-gpt-4o/"
+        },
+        {
+          "title": "Gemini - Google DeepMind",
+          "url": "https://deepmind.google/technologies/gemini/"
+        },
+        {
+          "title": "QwenLM/Qwen2.5-VL",
+          "url": "https://github.com/QwenLM/Qwen2.5-VL"
+        }
+      ]
     },
     {
       "id": "tn-0007",
@@ -72,7 +156,21 @@
       ],
       "frequency": "mid",
       "source": "drivecast 方向设计",
-      "notes": "冷启动/成本/可迁移性"
+      "notes": "冷启动/成本/可迁移性",
+      "refs": [
+        {
+          "title": "RunPod - Serverless GPU Cloud",
+          "url": "https://www.runpod.io/"
+        },
+        {
+          "title": "Modal - Serverless Cloud for AI",
+          "url": "https://modal.com/"
+        },
+        {
+          "title": "Amazon SageMaker Serverless Inference",
+          "url": "https://docs.aws.amazon.com/sagemaker/latest/dg/serverless-endpoints.html"
+        }
+      ]
     },
     {
       "id": "tn-0008",
@@ -82,7 +180,21 @@
       ],
       "frequency": "mid",
       "source": "drivecast 方向设计",
-      "notes": "待人工复核"
+      "notes": "待人工复核",
+      "refs": [
+        {
+          "title": "GitHub Blog: AI and ML",
+          "url": "https://github.blog/ai-and-ml/"
+        },
+        {
+          "title": "GitHub Copilot",
+          "url": "https://github.com/features/copilot"
+        },
+        {
+          "title": "Claude Code - Anthropic",
+          "url": "https://www.anthropic.com/claude-code"
+        }
+      ]
     },
     {
       "id": "tn-0009",
@@ -92,7 +204,17 @@
       ],
       "frequency": "high",
       "source": "drivecast 方向设计",
-      "notes": "抽象层/评估驱动"
+      "notes": "抽象层/评估驱动",
+      "refs": [
+        {
+          "title": "Building effective agents - Anthropic Engineering",
+          "url": "https://www.anthropic.com/engineering/building-effective-agents"
+        },
+        {
+          "title": "LangChain Documentation: Concepts",
+          "url": "https://python.langchain.com/docs/concepts/"
+        }
+      ]
     },
     {
       "id": "tn-0010",
@@ -102,7 +224,17 @@
       ],
       "frequency": "high",
       "source": "drivecast 方向设计",
-      "notes": "长上下文成本/检索精准性"
+      "notes": "长上下文成本/检索精准性",
+      "refs": [
+        {
+          "title": "Lost in the Middle: How Language Models Use Long Contexts (arXiv:2307.03172)",
+          "url": "https://arxiv.org/abs/2307.03172"
+        },
+        {
+          "title": "Introducing Contextual Retrieval - Anthropic",
+          "url": "https://www.anthropic.com/news/contextual-retrieval"
+        }
+      ]
     },
     {
       "id": "tn-0011",
@@ -112,7 +244,21 @@
       ],
       "frequency": "mid",
       "source": "drivecast 方向设计",
-      "notes": "硬件适配/收益/维护成本"
+      "notes": "硬件适配/收益/维护成本",
+      "refs": [
+        {
+          "title": "Efficient Memory Management for Large Language Model Serving with PagedAttention (arXiv:2309.06180)",
+          "url": "https://arxiv.org/abs/2309.06180"
+        },
+        {
+          "title": "vllm-project/vllm",
+          "url": "https://github.com/vllm-project/vllm"
+        },
+        {
+          "title": "ggerganov/llama.cpp",
+          "url": "https://github.com/ggerganov/llama.cpp"
+        }
+      ]
     },
     {
       "id": "tn-0012",
@@ -122,7 +268,17 @@
       ],
       "frequency": "mid",
       "source": "drivecast 方向设计",
-      "notes": "数据安全/可解释性/责任边界"
+      "notes": "数据安全/可解释性/责任边界",
+      "refs": [
+        {
+          "title": "EU AI Act - artificialintelligenceact.eu",
+          "url": "https://artificialintelligenceact.eu/"
+        },
+        {
+          "title": "AI regulatory framework - European Commission",
+          "url": "https://digital-strategy.ec.europa.eu/en/policies/regulatory-framework-ai"
+        }
+      ]
     },
     {
       "id": "tn-0013",
@@ -132,7 +288,17 @@
       ],
       "frequency": "mid",
       "source": "drivecast 方向设计",
-      "notes": "幻觉/延迟/成本/用户体验"
+      "notes": "幻觉/延迟/成本/用户体验",
+      "refs": [
+        {
+          "title": "Survey on Hallucination in Large Language Models (arXiv:2311.05232)",
+          "url": "https://arxiv.org/abs/2311.05232"
+        },
+        {
+          "title": "Generative AI (e.g. ChatGPT) is banned - Meta Stack Overflow",
+          "url": "https://meta.stackoverflow.com/questions/421831/generative-ai-e-g-chatgpt-is-banned"
+        }
+      ]
     },
     {
       "id": "tn-0014",
@@ -142,7 +308,21 @@
       ],
       "frequency": "mid",
       "source": "drivecast 方向设计",
-      "notes": "生态/运维/云原生/成本"
+      "notes": "生态/运维/云原生/成本",
+      "refs": [
+        {
+          "title": "Milvus Documentation",
+          "url": "https://milvus.io/docs"
+        },
+        {
+          "title": "milvus-io/milvus",
+          "url": "https://github.com/milvus-io/milvus"
+        },
+        {
+          "title": "What is a Vector Database? - Pinecone",
+          "url": "https://www.pinecone.io/learn/vector-database/"
+        }
+      ]
     },
     {
       "id": "tn-0015",
@@ -152,7 +332,167 @@
       ],
       "frequency": "mid",
       "source": "drivecast 方向设计",
-      "notes": "隐私/延迟/网络不稳定"
+      "notes": "隐私/延迟/网络不稳定",
+      "refs": [
+        {
+          "title": "Gemma - Google AI for Developers",
+          "url": "https://ai.google.dev/gemma"
+        },
+        {
+          "title": "ggerganov/llama.cpp",
+          "url": "https://github.com/ggerganov/llama.cpp"
+        },
+        {
+          "title": "Ollama",
+          "url": "https://ollama.com/"
+        }
+      ]
+    },
+    {
+      "id": "tn-0016",
+      "question": "o1/DeepSeek-R1 这类推理模型火起来后,对应用架构设计和推理成本有什么影响?",
+      "topic": [
+        "推理模型",
+        "观点"
+      ],
+      "frequency": "high",
+      "source": "2026大模型面试题库",
+      "notes": "test-time compute/成本结构变化/延迟与质量取舍",
+      "refs": [
+        {
+          "title": "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning (arXiv:2501.12948)",
+          "url": "https://arxiv.org/abs/2501.12948"
+        },
+        {
+          "title": "Learning to Reason with LLMs - OpenAI",
+          "url": "https://openai.com/index/learning-to-reason-with-llms/"
+        },
+        {
+          "title": "deepseek-ai/DeepSeek-R1",
+          "url": "https://github.com/deepseek-ai/DeepSeek-R1"
+        }
+      ]
+    },
+    {
+      "id": "tn-0017",
+      "question": "Claude Code/Cursor 这类 agentic coding 工具成熟后,后端工程师的核心竞争力在哪里?",
+      "topic": [
+        "ai编程",
+        "agent"
+      ],
+      "frequency": "high",
+      "source": "2026大模型面试题库",
+      "notes": "代码审查/系统设计/上下文供给能力",
+      "refs": [
+        {
+          "title": "Claude Code: Best practices for agentic coding - Anthropic Engineering",
+          "url": "https://www.anthropic.com/engineering/claude-code-best-practices"
+        },
+        {
+          "title": "Claude Code - Anthropic",
+          "url": "https://www.anthropic.com/claude-code"
+        },
+        {
+          "title": "GitHub Blog: AI and ML",
+          "url": "https://github.blog/ai-and-ml/"
+        }
+      ]
+    },
+    {
+      "id": "tn-0018",
+      "question": "MCP、A2A、Function Calling 这些协议并存,你怎么判断哪个会沉淀下来成为标准?",
+      "topic": [
+        "mcp",
+        "agent"
+      ],
+      "frequency": "high",
+      "source": "2026大模型面试题库",
+      "notes": "工具接入 vs 智能体互联;A2A 已捐给 Linux Foundation",
+      "refs": [
+        {
+          "title": "Model Context Protocol: Introduction",
+          "url": "https://modelcontextprotocol.io/introduction"
+        },
+        {
+          "title": "A2A: A new era of agent interoperability - Google Developers Blog",
+          "url": "https://developers.googleblog.com/en/a2a-a-new-era-of-agent-interoperability/"
+        },
+        {
+          "title": "a2aproject/A2A",
+          "url": "https://github.com/a2aproject/A2A"
+        }
+      ]
+    },
+    {
+      "id": "tn-0019",
+      "question": "DeepSeek 以极低成本训练出一线模型,对算力军备竞赛和开源生态意味着什么?",
+      "topic": [
+        "开源",
+        "成本"
+      ],
+      "frequency": "high",
+      "source": "2026大模型面试题库",
+      "notes": "训练成本/蒸馏策略/开源权重对闭源定价的冲击",
+      "refs": [
+        {
+          "title": "DeepSeek-R1 (arXiv:2501.12948)",
+          "url": "https://arxiv.org/abs/2501.12948"
+        },
+        {
+          "title": "DeepSeek-V3 Technical Report (arXiv:2412.19437)",
+          "url": "https://arxiv.org/abs/2412.19437"
+        },
+        {
+          "title": "deepseek-ai/DeepSeek-V3",
+          "url": "https://github.com/deepseek-ai/DeepSeek-V3"
+        }
+      ]
+    },
+    {
+      "id": "tn-0020",
+      "question": "「上下文工程」最近被频繁讨论,它和提示词工程有什么区别?工程上怎么落地?",
+      "topic": [
+        "agent",
+        "工程"
+      ],
+      "frequency": "mid",
+      "source": "2026大模型面试题库",
+      "notes": "上下文预算/压缩/工具结果管理/上下文污染",
+      "refs": [
+        {
+          "title": "Effective context engineering for AI agents - Anthropic Engineering",
+          "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents"
+        },
+        {
+          "title": "Building effective agents - Anthropic Engineering",
+          "url": "https://www.anthropic.com/engineering/building-effective-agents"
+        }
+      ]
+    },
+    {
+      "id": "tn-0021",
+      "question": "大模型 API 价格战、推理成本持续下降,会怎么改变应用层的架构决策?",
+      "topic": [
+        "成本",
+        "观点"
+      ],
+      "frequency": "mid",
+      "source": "drivecast 方向设计",
+      "notes": "自建 vs 调 API 的临界点在移动;token 成本治理",
+      "refs": [
+        {
+          "title": "OpenAI API Pricing",
+          "url": "https://openai.com/api/pricing/"
+        },
+        {
+          "title": "DeepSeek API Docs: Pricing",
+          "url": "https://api-docs.deepseek.com/quick_start/pricing"
+        },
+        {
+          "title": "Anthropic Pricing",
+          "url": "https://www.anthropic.com/pricing"
+        }
+      ]
     }
   ]
 }

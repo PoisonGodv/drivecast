@@ -1,7 +1,7 @@
 {
   "direction": "ai_llm",
-  "version": 1,
-  "updated_at": "2026-09-01",
+  "version": 2,
+  "updated_at": "2026-09-11",
   "questions": [
     {
       "id": "ai-0001",
@@ -12,7 +12,21 @@
       ],
       "frequency": "high",
       "source": "老刘说 NLP RAG 常见面试题 / 2026大模型面试题库",
-      "notes": "query/切块/embedding/召回/rerank"
+      "notes": "query/切块/embedding/召回/rerank",
+      "refs": [
+        {
+          "title": "Ragas: Automated Evaluation of Retrieval Augmented Generation (arXiv:2309.15217)",
+          "url": "https://arxiv.org/abs/2309.15217"
+        },
+        {
+          "title": "Ragas Documentation",
+          "url": "https://docs.ragas.io/"
+        },
+        {
+          "title": "LlamaIndex Documentation",
+          "url": "https://docs.llamaindex.ai/en/stable/"
+        }
+      ]
     },
     {
       "id": "ai-0002",
@@ -23,7 +37,17 @@
       ],
       "frequency": "high",
       "source": "GitHub LLMs_interview_notes / 2026大模型面试题库",
-      "notes": "上下文完整性与召回粒度权衡"
+      "notes": "上下文完整性与召回粒度权衡",
+      "refs": [
+        {
+          "title": "How to recursively split text by characters | LangChain Docs",
+          "url": "https://python.langchain.com/docs/how_to/recursive_text_splitter/"
+        },
+        {
+          "title": "LlamaIndex Documentation",
+          "url": "https://docs.llamaindex.ai/en/stable/"
+        }
+      ]
     },
     {
       "id": "ai-0003",
@@ -34,7 +58,21 @@
       ],
       "frequency": "high",
       "source": "2026大模型面试题库",
-      "notes": "MTEB/领域微调/多语言"
+      "notes": "MTEB/领域微调/多语言",
+      "refs": [
+        {
+          "title": "MTEB: Massive Text Embedding Benchmark (arXiv:2210.07316)",
+          "url": "https://arxiv.org/abs/2210.07316"
+        },
+        {
+          "title": "Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks (arXiv:1908.10084)",
+          "url": "https://arxiv.org/abs/1908.10084"
+        },
+        {
+          "title": "Sentence Transformers Documentation",
+          "url": "https://www.sbert.net/"
+        }
+      ]
     },
     {
       "id": "ai-0004",
@@ -45,7 +83,17 @@
       ],
       "frequency": "high",
       "source": "老刘说 NLP / 2026大模型面试题库",
-      "notes": "事实性/忠实性/生成式幻觉"
+      "notes": "事实性/忠实性/生成式幻觉",
+      "refs": [
+        {
+          "title": "A Survey on Hallucination in Large Language Models (arXiv:2311.05232)",
+          "url": "https://arxiv.org/abs/2311.05232"
+        },
+        {
+          "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks (arXiv:2005.11401)",
+          "url": "https://arxiv.org/abs/2005.11401"
+        }
+      ]
     },
     {
       "id": "ai-0005",
@@ -56,7 +104,17 @@
       ],
       "frequency": "high",
       "source": "2026大模型面试题库",
-      "notes": "延迟成本 vs 召回质量"
+      "notes": "延迟成本 vs 召回质量",
+      "refs": [
+        {
+          "title": "Cohere Rerank Documentation",
+          "url": "https://docs.cohere.com/docs/rerank"
+        },
+        {
+          "title": "Retrieval concepts | LangChain Docs",
+          "url": "https://python.langchain.com/docs/concepts/retrieval/"
+        }
+      ]
     },
     {
       "id": "ai-0006",
@@ -67,7 +125,17 @@
       ],
       "frequency": "high",
       "source": "代码随想录 2026大模型面经 / 2026大模型面试题库",
-      "notes": "推理+行动 vs 结构化工具调用"
+      "notes": "推理+行动 vs 结构化工具调用",
+      "refs": [
+        {
+          "title": "ReAct: Synergizing Reasoning and Acting in Language Models (arXiv:2210.03629)",
+          "url": "https://arxiv.org/abs/2210.03629"
+        },
+        {
+          "title": "Function Calling | OpenAI API Docs",
+          "url": "https://platform.openai.com/docs/guides/function-calling"
+        }
+      ]
     },
     {
       "id": "ai-0007",
@@ -78,7 +146,17 @@
       ],
       "frequency": "high",
       "source": "GitHub LLMs_interview_notes / 2026大模型面试题库",
-      "notes": "buffer/summary/vector store"
+      "notes": "buffer/summary/vector store",
+      "refs": [
+        {
+          "title": "Memory | LangGraph Docs",
+          "url": "https://langchain-ai.github.io/langgraph/concepts/memory/"
+        },
+        {
+          "title": "Building Effective Agents | Anthropic",
+          "url": "https://www.anthropic.com/research/building-effective-agents"
+        }
+      ]
     },
     {
       "id": "ai-0008",
@@ -89,7 +167,17 @@
       ],
       "frequency": "high",
       "source": "2026大模型面试题库",
-      "notes": "路由、状态同步、循环调用"
+      "notes": "路由、状态同步、循环调用",
+      "refs": [
+        {
+          "title": "AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversation (arXiv:2308.08155)",
+          "url": "https://arxiv.org/abs/2308.08155"
+        },
+        {
+          "title": "How we built our multi-agent research system | Anthropic",
+          "url": "https://www.anthropic.com/engineering/multi-agent-research-system"
+        }
+      ]
     },
     {
       "id": "ai-0009",
@@ -100,7 +188,17 @@
       ],
       "frequency": "high",
       "source": "2026大模型面试题库",
-      "notes": "工具 schema 校验/超时/错误分类"
+      "notes": "工具 schema 校验/超时/错误分类",
+      "refs": [
+        {
+          "title": "Building Effective Agents | Anthropic",
+          "url": "https://www.anthropic.com/research/building-effective-agents"
+        },
+        {
+          "title": "Function Calling | OpenAI API Docs",
+          "url": "https://platform.openai.com/docs/guides/function-calling"
+        }
+      ]
     },
     {
       "id": "ai-0010",
@@ -111,7 +209,17 @@
       ],
       "frequency": "high",
       "source": "GitHub LLMs_interview_notes / 2026大模型面试题库",
-      "notes": "能力学习 vs 偏好对齐"
+      "notes": "能力学习 vs 偏好对齐",
+      "refs": [
+        {
+          "title": "Training language models to follow instructions with human feedback (arXiv:2203.02155)",
+          "url": "https://arxiv.org/abs/2203.02155"
+        },
+        {
+          "title": "Direct Preference Optimization: Your Language Model is Secretly a Reward Model (arXiv:2305.18290)",
+          "url": "https://arxiv.org/abs/2305.18290"
+        }
+      ]
     },
     {
       "id": "ai-0011",
@@ -122,7 +230,13 @@
       ],
       "frequency": "high",
       "source": "2026大模型面试题库",
-      "notes": "低秩分解;rank 越大表达能力越强但显存越大"
+      "notes": "低秩分解;rank 越大表达能力越强但显存越大",
+      "refs": [
+        {
+          "title": "LoRA: Low-Rank Adaptation of Large Language Models (arXiv:2106.09685)",
+          "url": "https://arxiv.org/abs/2106.09685"
+        }
+      ]
     },
     {
       "id": "ai-0012",
@@ -133,7 +247,13 @@
       ],
       "frequency": "high",
       "source": "GitHub LLMs_interview_notes",
-      "notes": "量化常数+分页优化器"
+      "notes": "量化常数+分页优化器",
+      "refs": [
+        {
+          "title": "QLoRA: Efficient Finetuning of Quantized LLMs (arXiv:2305.14314)",
+          "url": "https://arxiv.org/abs/2305.14314"
+        }
+      ]
     },
     {
       "id": "ai-0013",
@@ -144,7 +264,17 @@
       ],
       "frequency": "high",
       "source": "极市社区 LLM推理优化高频面试题 / 阿里 LLM推理优化面经",
-      "notes": "避免重复计算历史 key/value;长序列显存 O(n)"
+      "notes": "避免重复计算历史 key/value;长序列显存 O(n)",
+      "refs": [
+        {
+          "title": "Efficient Memory Management for Large Language Model Serving with PagedAttention (arXiv:2309.06180)",
+          "url": "https://arxiv.org/abs/2309.06180"
+        },
+        {
+          "title": "vLLM Documentation",
+          "url": "https://docs.vllm.ai/en/latest/"
+        }
+      ]
     },
     {
       "id": "ai-0014",
@@ -155,7 +285,17 @@
       ],
       "frequency": "high",
       "source": "极市社区 LLM推理优化高频面试题",
-      "notes": "分块计算+重计算;IO 感知"
+      "notes": "分块计算+重计算;IO 感知",
+      "refs": [
+        {
+          "title": "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness (arXiv:2205.14135)",
+          "url": "https://arxiv.org/abs/2205.14135"
+        },
+        {
+          "title": "FlashAttention-2: Better Attention with Better Parallelism and Work Partitioning (arXiv:2307.08691)",
+          "url": "https://arxiv.org/abs/2307.08691"
+        }
+      ]
     },
     {
       "id": "ai-0015",
@@ -166,7 +306,17 @@
       ],
       "frequency": "high",
       "source": "阿里 LLM推理优化面经 / 2026大模型面试题库",
-      "notes": "请求长度不齐时 GPU 利用率"
+      "notes": "请求长度不齐时 GPU 利用率",
+      "refs": [
+        {
+          "title": "Orca: A Distributed Serving System for Transformer-Based Generative Models (OSDI '22)",
+          "url": "https://www.usenix.org/conference/osdi22/presentation/yu"
+        },
+        {
+          "title": "vLLM Documentation",
+          "url": "https://docs.vllm.ai/en/latest/"
+        }
+      ]
     },
     {
       "id": "ai-0016",
@@ -177,7 +327,17 @@
       ],
       "frequency": "high",
       "source": "2026大模型面试题库",
-      "notes": "操作系统分页;KV Cache 碎片/浪费"
+      "notes": "操作系统分页;KV Cache 碎片/浪费",
+      "refs": [
+        {
+          "title": "Efficient Memory Management for Large Language Model Serving with PagedAttention (arXiv:2309.06180)",
+          "url": "https://arxiv.org/abs/2309.06180"
+        },
+        {
+          "title": "vLLM Documentation",
+          "url": "https://docs.vllm.ai/en/latest/"
+        }
+      ]
     },
     {
       "id": "ai-0017",
@@ -188,7 +348,21 @@
       ],
       "frequency": "high",
       "source": "极市社区 LLM推理优化高频面试题",
-      "notes": "GPTQ/AWQ/SmoothQuant;outlier 激活值"
+      "notes": "GPTQ/AWQ/SmoothQuant;outlier 激活值",
+      "refs": [
+        {
+          "title": "GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers (arXiv:2210.17323)",
+          "url": "https://arxiv.org/abs/2210.17323"
+        },
+        {
+          "title": "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration (arXiv:2306.00978)",
+          "url": "https://arxiv.org/abs/2306.00978"
+        },
+        {
+          "title": "SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models (arXiv:2211.10438)",
+          "url": "https://arxiv.org/abs/2211.10438"
+        }
+      ]
     },
     {
       "id": "ai-0018",
@@ -199,7 +373,13 @@
       ],
       "frequency": "high",
       "source": "阿里 LLM推理优化面经",
-      "notes": "小模型生成候选+大模型并行验证"
+      "notes": "小模型生成候选+大模型并行验证",
+      "refs": [
+        {
+          "title": "Fast Inference from Transformers via Speculative Decoding (arXiv:2211.17192)",
+          "url": "https://arxiv.org/abs/2211.17192"
+        }
+      ]
     },
     {
       "id": "ai-0019",
@@ -210,7 +390,21 @@
       ],
       "frequency": "high",
       "source": "代码随想录 2026大模型面经",
-      "notes": "O(n^2);稀疏注意力/线性注意力/RoPE 外推"
+      "notes": "O(n^2);稀疏注意力/线性注意力/RoPE 外推",
+      "refs": [
+        {
+          "title": "Attention Is All You Need (arXiv:1706.03762)",
+          "url": "https://arxiv.org/abs/1706.03762"
+        },
+        {
+          "title": "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness (arXiv:2205.14135)",
+          "url": "https://arxiv.org/abs/2205.14135"
+        },
+        {
+          "title": "YaRN: Efficient Context Window Extension of Large Language Models (arXiv:2309.00071)",
+          "url": "https://arxiv.org/abs/2309.00071"
+        }
+      ]
     },
     {
       "id": "ai-0020",
@@ -221,7 +415,17 @@
       ],
       "frequency": "high",
       "source": "老刘说 NLP / 2026大模型面试题库",
-      "notes": "retrieval/generation/end-to-end 分层评估"
+      "notes": "retrieval/generation/end-to-end 分层评估",
+      "refs": [
+        {
+          "title": "Ragas: Automated Evaluation of Retrieval Augmented Generation (arXiv:2309.15217)",
+          "url": "https://arxiv.org/abs/2309.15217"
+        },
+        {
+          "title": "Ragas Documentation",
+          "url": "https://docs.ragas.io/"
+        }
+      ]
     },
     {
       "id": "ai-0021",
@@ -232,7 +436,17 @@
       ],
       "frequency": "mid",
       "source": "2026大模型面试题库",
-      "notes": "实体关系图+社区摘要;结构化知识"
+      "notes": "实体关系图+社区摘要;结构化知识",
+      "refs": [
+        {
+          "title": "From Local to Global: A Graph RAG Approach to Query-Focused Summarization (arXiv:2404.16130)",
+          "url": "https://arxiv.org/abs/2404.16130"
+        },
+        {
+          "title": "microsoft/graphrag | GitHub",
+          "url": "https://github.com/microsoft/graphrag"
+        }
+      ]
     },
     {
       "id": "ai-0022",
@@ -243,7 +457,17 @@
       ],
       "frequency": "mid",
       "source": "2026大模型面试题库",
-      "notes": "生成反思 token/检索结果校验"
+      "notes": "生成反思 token/检索结果校验",
+      "refs": [
+        {
+          "title": "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection (arXiv:2310.11511)",
+          "url": "https://arxiv.org/abs/2310.11511"
+        },
+        {
+          "title": "Corrective Retrieval Augmented Generation (arXiv:2401.15884)",
+          "url": "https://arxiv.org/abs/2401.15884"
+        }
+      ]
     },
     {
       "id": "ai-0023",
@@ -254,7 +478,17 @@
       ],
       "frequency": "mid",
       "source": "GitHub LLMs_interview_notes",
-      "notes": "Let's think step by step"
+      "notes": "Let's think step by step",
+      "refs": [
+        {
+          "title": "Chain-of-Thought Prompting Elicits Reasoning in Large Language Models (arXiv:2201.11903)",
+          "url": "https://arxiv.org/abs/2201.11903"
+        },
+        {
+          "title": "Chain-of-Thought Prompting | Prompt Engineering Guide",
+          "url": "https://www.promptingguide.ai/techniques/cot"
+        }
+      ]
     },
     {
       "id": "ai-0024",
@@ -265,7 +499,17 @@
       ],
       "frequency": "mid",
       "source": "2026大模型面试题库",
-      "notes": "HyDE/扩展/分解"
+      "notes": "HyDE/扩展/分解",
+      "refs": [
+        {
+          "title": "Precise Zero-Shot Dense Retrieval without Relevance Labels (HyDE, arXiv:2212.10496)",
+          "url": "https://arxiv.org/abs/2212.10496"
+        },
+        {
+          "title": "Retrieval concepts | LangChain Docs",
+          "url": "https://python.langchain.com/docs/concepts/retrieval/"
+        }
+      ]
     },
     {
       "id": "ai-0025",
@@ -276,7 +520,21 @@
       ],
       "frequency": "mid",
       "source": "2026大模型面试题库",
-      "notes": "规模/延迟/元数据过滤"
+      "notes": "规模/延迟/元数据过滤",
+      "refs": [
+        {
+          "title": "milvus-io/milvus | GitHub",
+          "url": "https://github.com/milvus-io/milvus"
+        },
+        {
+          "title": "facebookresearch/faiss | GitHub",
+          "url": "https://github.com/facebookresearch/faiss"
+        },
+        {
+          "title": "k-nearest neighbor (kNN) search | Elasticsearch Guide",
+          "url": "https://www.elastic.co/guide/en/elasticsearch/reference/current/knn-search.html"
+        }
+      ]
     },
     {
       "id": "ai-0026",
@@ -287,7 +545,21 @@
       ],
       "frequency": "mid",
       "source": "2026大模型面试题库",
-      "notes": "复杂任务分解与搜索"
+      "notes": "复杂任务分解与搜索",
+      "refs": [
+        {
+          "title": "Tree of Thoughts: Deliberate Problem Solving with Large Language Models (arXiv:2305.10601)",
+          "url": "https://arxiv.org/abs/2305.10601"
+        },
+        {
+          "title": "Plan-and-Solve Prompting (arXiv:2305.04091)",
+          "url": "https://arxiv.org/abs/2305.04091"
+        },
+        {
+          "title": "ReAct: Synergizing Reasoning and Acting in Language Models (arXiv:2210.03629)",
+          "url": "https://arxiv.org/abs/2210.03629"
+        }
+      ]
     },
     {
       "id": "ai-0027",
@@ -298,7 +570,17 @@
       ],
       "frequency": "mid",
       "source": "2026大模型面试题库",
-      "notes": "工具接口标准化;待人工复核"
+      "notes": "工具接口标准化;待人工复核",
+      "refs": [
+        {
+          "title": "Introduction | Model Context Protocol",
+          "url": "https://modelcontextprotocol.io/introduction"
+        },
+        {
+          "title": "Introducing the Model Context Protocol | Anthropic",
+          "url": "https://www.anthropic.com/news/model-context-protocol"
+        }
+      ]
     },
     {
       "id": "ai-0028",
@@ -309,7 +591,17 @@
       ],
       "frequency": "mid",
       "source": "2026大模型面试题库",
-      "notes": "参数校验/最小权限/沙箱"
+      "notes": "参数校验/最小权限/沙箱",
+      "refs": [
+        {
+          "title": "Function Calling | OpenAI API Docs",
+          "url": "https://platform.openai.com/docs/guides/function-calling"
+        },
+        {
+          "title": "OWASP Top 10 for Large Language Model Applications",
+          "url": "https://owasp.org/www-project-top-10-for-large-language-model-applications/"
+        }
+      ]
     },
     {
       "id": "ai-0029",
@@ -320,7 +612,17 @@
       ],
       "frequency": "mid",
       "source": "2026大模型面试题库",
-      "notes": "摘要/关键信息提取/滑动窗口"
+      "notes": "摘要/关键信息提取/滑动窗口",
+      "refs": [
+        {
+          "title": "LLMLingua: Compressing Prompts for Accelerated Inference of Large Language Models (arXiv:2310.05736)",
+          "url": "https://arxiv.org/abs/2310.05736"
+        },
+        {
+          "title": "Memory | LangGraph Docs",
+          "url": "https://langchain-ai.github.io/langgraph/concepts/memory/"
+        }
+      ]
     },
     {
       "id": "ai-0030",
@@ -331,7 +633,17 @@
       ],
       "frequency": "mid",
       "source": "GitHub LLMs_interview_notes",
-      "notes": "多样性/难度/格式一致"
+      "notes": "多样性/难度/格式一致",
+      "refs": [
+        {
+          "title": "LIMA: Less Is More for Alignment (arXiv:2305.11206)",
+          "url": "https://arxiv.org/abs/2305.11206"
+        },
+        {
+          "title": "tatsu-lab/stanford_alpaca | GitHub",
+          "url": "https://github.com/tatsu-lab/stanford_alpaca"
+        }
+      ]
     },
     {
       "id": "ai-0031",
@@ -342,7 +654,13 @@
       ],
       "frequency": "mid",
       "source": "2026大模型面试题库",
-      "notes": "replay/弹性权重固化/EWC"
+      "notes": "replay/弹性权重固化/EWC",
+      "refs": [
+        {
+          "title": "Overcoming catastrophic forgetting in neural networks (EWC, arXiv:1612.00796)",
+          "url": "https://arxiv.org/abs/1612.00796"
+        }
+      ]
     },
     {
       "id": "ai-0032",
@@ -353,7 +671,17 @@
       ],
       "frequency": "mid",
       "source": "GitHub LLMs_interview_notes",
-      "notes": "Bradley-Terry 模型;闭式损失"
+      "notes": "Bradley-Terry 模型;闭式损失",
+      "refs": [
+        {
+          "title": "Direct Preference Optimization: Your Language Model is Secretly a Reward Model (arXiv:2305.18290)",
+          "url": "https://arxiv.org/abs/2305.18290"
+        },
+        {
+          "title": "Proximal Policy Optimization Algorithms (arXiv:1707.06347)",
+          "url": "https://arxiv.org/abs/1707.06347"
+        }
+      ]
     },
     {
       "id": "ai-0033",
@@ -364,7 +692,17 @@
       ],
       "frequency": "mid",
       "source": "2026大模型面试题库",
-      "notes": "reward hacking/分布外"
+      "notes": "reward hacking/分布外",
+      "refs": [
+        {
+          "title": "Training language models to follow instructions with human feedback (arXiv:2203.02155)",
+          "url": "https://arxiv.org/abs/2203.02155"
+        },
+        {
+          "title": "Scaling Laws for Reward Model Overoptimization (arXiv:2210.10760)",
+          "url": "https://arxiv.org/abs/2210.10760"
+        }
+      ]
     },
     {
       "id": "ai-0034",
@@ -375,7 +713,17 @@
       ],
       "frequency": "mid",
       "source": "阿里 LLM推理优化面经",
-      "notes": "prefix 缓存/按长度调度"
+      "notes": "prefix 缓存/按长度调度",
+      "refs": [
+        {
+          "title": "Automatic Prefix Caching | vLLM Docs",
+          "url": "https://docs.vllm.ai/en/latest/features/automatic_prefix_caching.html"
+        },
+        {
+          "title": "vLLM Documentation",
+          "url": "https://docs.vllm.ai/en/latest/"
+        }
+      ]
     },
     {
       "id": "ai-0035",
@@ -386,7 +734,17 @@
       ],
       "frequency": "mid",
       "source": "极市社区 LLM推理优化高频面试题",
-      "notes": "all-reduce vs point-to-point"
+      "notes": "all-reduce vs point-to-point",
+      "refs": [
+        {
+          "title": "Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism (arXiv:1909.08053)",
+          "url": "https://arxiv.org/abs/1909.08053"
+        },
+        {
+          "title": "GPipe: Efficient Training of Giant Neural Networks using Pipeline Parallelism (arXiv:1811.06965)",
+          "url": "https://arxiv.org/abs/1811.06965"
+        }
+      ]
     },
     {
       "id": "ai-0036",
@@ -397,7 +755,17 @@
       ],
       "frequency": "mid",
       "source": "2026大模型面试题库",
-      "notes": "高频待人工复核"
+      "notes": "高频待人工复核",
+      "refs": [
+        {
+          "title": "RoFormer: Enhanced Transformer with Rotary Position Embedding (arXiv:2104.09864)",
+          "url": "https://arxiv.org/abs/2104.09864"
+        },
+        {
+          "title": "YaRN: Efficient Context Window Extension of Large Language Models (arXiv:2309.00071)",
+          "url": "https://arxiv.org/abs/2309.00071"
+        }
+      ]
     },
     {
       "id": "ai-0037",
@@ -408,7 +776,17 @@
       ],
       "frequency": "mid",
       "source": "2026大模型面试题库",
-      "notes": "faithfulness/uncertainty/人工抽检"
+      "notes": "faithfulness/uncertainty/人工抽检",
+      "refs": [
+        {
+          "title": "A Survey on Hallucination in Large Language Models (arXiv:2311.05232)",
+          "url": "https://arxiv.org/abs/2311.05232"
+        },
+        {
+          "title": "Ragas Documentation",
+          "url": "https://docs.ragas.io/"
+        }
+      ]
     },
     {
       "id": "ai-0038",
@@ -419,7 +797,17 @@
       ],
       "frequency": "mid",
       "source": "2026大模型面试题库",
-      "notes": "缓存/路由/降级/批处理"
+      "notes": "缓存/路由/降级/批处理",
+      "refs": [
+        {
+          "title": "LLM Inference Performance Engineering: Best Practices | Databricks Blog",
+          "url": "https://www.databricks.com/blog/llm-inference-performance-engineering-best-practices"
+        },
+        {
+          "title": "vLLM Documentation",
+          "url": "https://docs.vllm.ai/en/latest/"
+        }
+      ]
     },
     {
       "id": "ai-0039",
@@ -430,7 +818,17 @@
       ],
       "frequency": "mid",
       "source": "2026大模型面试题库",
-      "notes": "输入过滤/输出检测/权限隔离"
+      "notes": "输入过滤/输出检测/权限隔离",
+      "refs": [
+        {
+          "title": "Jailbroken: How Does LLM Safety Training Fail? (arXiv:2307.02483)",
+          "url": "https://arxiv.org/abs/2307.02483"
+        },
+        {
+          "title": "OWASP Top 10 for Large Language Model Applications",
+          "url": "https://owasp.org/www-project-top-10-for-large-language-model-applications/"
+        }
+      ]
     },
     {
       "id": "ai-0040",
@@ -441,7 +839,17 @@
       ],
       "frequency": "mid",
       "source": "2026大模型面试题库",
-      "notes": "RAG/Agent/人工接管/评估"
+      "notes": "RAG/Agent/人工接管/评估",
+      "refs": [
+        {
+          "title": "Building Effective Agents | Anthropic",
+          "url": "https://www.anthropic.com/research/building-effective-agents"
+        },
+        {
+          "title": "tau-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains (arXiv:2406.12045)",
+          "url": "https://arxiv.org/abs/2406.12045"
+        }
+      ]
     },
     {
       "id": "ai-0041",
@@ -452,7 +860,17 @@
       ],
       "frequency": "high",
       "source": "掘金 阿里 LLM推理优化面经",
-      "notes": "延迟/吞吐/成本/用户体验"
+      "notes": "延迟/吞吐/成本/用户体验",
+      "refs": [
+        {
+          "title": "LLM Inference Performance Engineering: Best Practices | Databricks Blog",
+          "url": "https://www.databricks.com/blog/llm-inference-performance-engineering-best-practices"
+        },
+        {
+          "title": "vLLM Documentation",
+          "url": "https://docs.vllm.ai/en/latest/"
+        }
+      ]
     },
     {
       "id": "ai-0042",
@@ -463,7 +881,17 @@
       ],
       "frequency": "mid",
       "source": "2026大模型面试题库",
-      "notes": "待人工复核"
+      "notes": "待人工复核",
+      "refs": [
+        {
+          "title": "Automatic Prefix Caching | vLLM Docs",
+          "url": "https://docs.vllm.ai/en/latest/features/automatic_prefix_caching.html"
+        },
+        {
+          "title": "SGLang: Efficient Execution of Structured Language Model Programs (arXiv:2312.07104)",
+          "url": "https://arxiv.org/abs/2312.07104"
+        }
+      ]
     },
     {
       "id": "ai-0043",
@@ -474,7 +902,17 @@
       ],
       "frequency": "low",
       "source": "2026大模型面试题库",
-      "notes": "负载均衡/专家并行"
+      "notes": "负载均衡/专家并行",
+      "refs": [
+        {
+          "title": "Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity (arXiv:2101.03961)",
+          "url": "https://arxiv.org/abs/2101.03961"
+        },
+        {
+          "title": "DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model (arXiv:2405.04434)",
+          "url": "https://arxiv.org/abs/2405.04434"
+        }
+      ]
     },
     {
       "id": "ai-0044",
@@ -485,7 +923,17 @@
       ],
       "frequency": "mid",
       "source": "老刘说 NLP / 2026大模型面试题库",
-      "notes": "分层定位"
+      "notes": "分层定位",
+      "refs": [
+        {
+          "title": "Ragas: Automated Evaluation of Retrieval Augmented Generation (arXiv:2309.15217)",
+          "url": "https://arxiv.org/abs/2309.15217"
+        },
+        {
+          "title": "Ragas Documentation",
+          "url": "https://docs.ragas.io/"
+        }
+      ]
     },
     {
       "id": "ai-0045",
@@ -496,7 +944,17 @@
       ],
       "frequency": "mid",
       "source": "2026大模型面试题库",
-      "notes": "主动检索 vs 静态上下文"
+      "notes": "主动检索 vs 静态上下文",
+      "refs": [
+        {
+          "title": "ReAct: Synergizing Reasoning and Acting in Language Models (arXiv:2210.03629)",
+          "url": "https://arxiv.org/abs/2210.03629"
+        },
+        {
+          "title": "Building Effective Agents | Anthropic",
+          "url": "https://www.anthropic.com/research/building-effective-agents"
+        }
+      ]
     },
     {
       "id": "ai-0046",
@@ -507,7 +965,17 @@
       ],
       "frequency": "low",
       "source": "GitHub LLMs_interview_notes",
-      "notes": "稳定训练/避免早期震荡"
+      "notes": "稳定训练/避免早期震荡",
+      "refs": [
+        {
+          "title": "Attention Is All You Need (arXiv:1706.03762)",
+          "url": "https://arxiv.org/abs/1706.03762"
+        },
+        {
+          "title": "Scaling Laws for Neural Language Models (arXiv:2001.08361)",
+          "url": "https://arxiv.org/abs/2001.08361"
+        }
+      ]
     },
     {
       "id": "ai-0047",
@@ -518,7 +986,17 @@
       ],
       "frequency": "mid",
       "source": "2026大模型面试题库",
-      "notes": "多样性/确定性/创造性"
+      "notes": "多样性/确定性/创造性",
+      "refs": [
+        {
+          "title": "The Curious Case of Neural Text Degeneration (Nucleus Sampling, arXiv:1904.09751)",
+          "url": "https://arxiv.org/abs/1904.09751"
+        },
+        {
+          "title": "How to generate: using different decoding methods for language generation | Chip Huyen",
+          "url": "https://huyenchip.com/2024/01/16/sampling.html"
+        }
+      ]
     },
     {
       "id": "ai-0048",
@@ -529,7 +1007,235 @@
       ],
       "frequency": "high",
       "source": "老刘说 NLP / 2026大模型面试题库",
-      "notes": "数据集/A/B 测试/用户反馈"
+      "notes": "数据集/A/B 测试/用户反馈",
+      "refs": [
+        {
+          "title": "Ragas: Automated Evaluation of Retrieval Augmented Generation (arXiv:2309.15217)",
+          "url": "https://arxiv.org/abs/2309.15217"
+        },
+        {
+          "title": "LangSmith Evaluation Docs",
+          "url": "https://docs.smith.langchain.com/evaluation"
+        },
+        {
+          "title": "openai/evals | GitHub",
+          "url": "https://github.com/openai/evals"
+        }
+      ]
+    },
+    {
+      "id": "ai-0049",
+      "question": "RAG 和微调怎么选?什么情况用 RAG、什么情况必须微调,能不能组合?",
+      "topic": [
+        "rag",
+        "微调"
+      ],
+      "frequency": "high",
+      "source": "2025-2026 面经高频补充",
+      "notes": "知识注入用 RAG;行为/风格/格式用微调;知识+风格组合使用",
+      "refs": [
+        {
+          "title": "Fine-Tuning or Retrieval? Comparing Knowledge Injection in LLMs (arXiv:2312.05934)",
+          "url": "https://arxiv.org/abs/2312.05934"
+        },
+        {
+          "title": "RAG vs Fine-tuning: Pipelines, Tradeoffs, and a Case Study on Agriculture (arXiv:2401.08406)",
+          "url": "https://arxiv.org/abs/2401.08406"
+        }
+      ]
+    },
+    {
+      "id": "ai-0050",
+      "question": "RAG 为什么要做混合检索(Hybrid Search)?BM25 和向量召回怎么用 RRF 融合?",
+      "topic": [
+        "rag",
+        "混合检索"
+      ],
+      "frequency": "high",
+      "source": "2025-2026 面经高频补充",
+      "notes": "稀疏+稠密互补;RRF 按排名融合、无需标定分数",
+      "refs": [
+        {
+          "title": "Reciprocal rank fusion (RRF) | Elasticsearch Guide",
+          "url": "https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html"
+        },
+        {
+          "title": "Hybrid Search Fusion Algorithms | Weaviate Blog",
+          "url": "https://weaviate.io/blog/hybrid-search-fusion-algorithms"
+        }
+      ]
+    },
+    {
+      "id": "ai-0051",
+      "question": "LLM-as-a-Judge 做自动评估有哪些偏差?工程上怎么缓解?",
+      "topic": [
+        "评估",
+        "llm-as-judge"
+      ],
+      "frequency": "high",
+      "source": "2025-2026 面经高频补充",
+      "notes": "位置偏差/冗长偏差/自我偏好;交换顺序、多 judge、人工校准",
+      "refs": [
+        {
+          "title": "Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena (arXiv:2306.05685)",
+          "url": "https://arxiv.org/abs/2306.05685"
+        },
+        {
+          "title": "LangSmith Evaluation Docs",
+          "url": "https://docs.smith.langchain.com/evaluation"
+        }
+      ]
+    },
+    {
+      "id": "ai-0052",
+      "question": "MQA、GQA、MLA 这些注意力变体分别把 KV Cache 压缩了多少?推理侧有什么取舍?",
+      "topic": [
+        "推理优化",
+        "注意力变体"
+      ],
+      "frequency": "high",
+      "source": "2025-2026 面经高频补充",
+      "notes": "KV head 共享程度;MLA 低秩压缩;质量与显存/带宽的权衡",
+      "refs": [
+        {
+          "title": "Fast Transformer Decoding: One Write-Head is All You Need (MQA, arXiv:1911.02150)",
+          "url": "https://arxiv.org/abs/1911.02150"
+        },
+        {
+          "title": "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints (arXiv:2305.13245)",
+          "url": "https://arxiv.org/abs/2305.13245"
+        },
+        {
+          "title": "DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model (MLA, arXiv:2405.04434)",
+          "url": "https://arxiv.org/abs/2405.04434"
+        }
+      ]
+    },
+    {
+      "id": "ai-0053",
+      "question": "GRPO 相比 PPO 做了什么简化?为什么 DeepSeek 系列用 GRPO 做强化学习?",
+      "topic": [
+        "微调",
+        "rl"
+      ],
+      "frequency": "mid",
+      "source": "2025-2026 面经高频补充",
+      "notes": "去掉 critic,用组内相对奖励估计优势;省显存、更稳定",
+      "refs": [
+        {
+          "title": "DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models (GRPO, arXiv:2402.03300)",
+          "url": "https://arxiv.org/abs/2402.03300"
+        },
+        {
+          "title": "Proximal Policy Optimization Algorithms (arXiv:1707.06347)",
+          "url": "https://arxiv.org/abs/1707.06347"
+        }
+      ]
+    },
+    {
+      "id": "ai-0054",
+      "question": "线上 LLM 推理服务要盯哪些核心指标?TTFT 和 TPOT 分别受什么因素影响?",
+      "topic": [
+        "推理优化",
+        "指标"
+      ],
+      "frequency": "high",
+      "source": "2025-2026 面经高频补充",
+      "notes": "prefill 决定 TTFT(算力瓶颈),decode 决定 TPOT(带宽瓶颈);batch/长度/量化",
+      "refs": [
+        {
+          "title": "LLM Inference Performance Engineering: Best Practices | Databricks Blog",
+          "url": "https://www.databricks.com/blog/llm-inference-performance-engineering-best-practices"
+        },
+        {
+          "title": "vLLM Documentation",
+          "url": "https://docs.vllm.ai/en/latest/"
+        }
+      ]
+    },
+    {
+      "id": "ai-0055",
+      "question": "怎么评估一个 Agent 系统?任务成功率、工具调用准确率、轨迹评估分别怎么做?",
+      "topic": [
+        "agent",
+        "评估"
+      ],
+      "frequency": "high",
+      "source": "2025-2026 面经高频补充",
+      "notes": "端到端成功率+过程轨迹评估;tau-bench 式工具-用户交互基准;LLM judge 评估轨迹",
+      "refs": [
+        {
+          "title": "tau-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains (arXiv:2406.12045)",
+          "url": "https://arxiv.org/abs/2406.12045"
+        },
+        {
+          "title": "LangSmith Evaluation Docs",
+          "url": "https://docs.smith.langchain.com/evaluation"
+        }
+      ]
+    },
+    {
+      "id": "ai-0056",
+      "question": "怎么保证 LLM 输出严格符合 JSON Schema?约束解码(Constrained Decoding)的原理是什么?",
+      "topic": [
+        "工程",
+        "结构化输出"
+      ],
+      "frequency": "mid",
+      "source": "2025-2026 面经高频补充",
+      "notes": "token 掩码/受限采样;Outlines/XGrammar;strict mode function calling",
+      "refs": [
+        {
+          "title": "Efficient Guided Generation for Large Language Models (Outlines, arXiv:2307.09702)",
+          "url": "https://arxiv.org/abs/2307.09702"
+        },
+        {
+          "title": "Structured Outputs | vLLM Docs",
+          "url": "https://docs.vllm.ai/en/latest/features/structured_outputs.html"
+        }
+      ]
+    },
+    {
+      "id": "ai-0057",
+      "question": "上下文窗口越来越大,RAG 还有必要吗?长上下文和 RAG 怎么取舍与结合?",
+      "topic": [
+        "rag",
+        "长上下文"
+      ],
+      "frequency": "mid",
+      "source": "2025-2026 面经高频补充",
+      "notes": "成本/延迟/lost-in-the-middle;长上下文补 RAG 而非替代;大规模语料仍需检索",
+      "refs": [
+        {
+          "title": "In Defense of RAG in the Era of Long-Context Language Models (arXiv:2409.01666)",
+          "url": "https://arxiv.org/abs/2409.01666"
+        },
+        {
+          "title": "LongRAG: Enhancing Retrieval-Augmented Generation with Long-context LLMs (arXiv:2406.15319)",
+          "url": "https://arxiv.org/abs/2406.15319"
+        }
+      ]
+    },
+    {
+      "id": "ai-0058",
+      "question": "模型蒸馏在大模型工程里怎么用?什么时候选蒸馏而不是量化或直接微调小模型?",
+      "topic": [
+        "微调",
+        "蒸馏"
+      ],
+      "frequency": "mid",
+      "source": "2025-2026 面经高频补充",
+      "notes": "教师-学生 logits/推理链蒸馏;蒸馏迁能力,量化压体积,可叠加",
+      "refs": [
+        {
+          "title": "Distilling the Knowledge in a Neural Network (arXiv:1503.02531)",
+          "url": "https://arxiv.org/abs/1503.02531"
+        },
+        {
+          "title": "DistilBERT, a distilled version of BERT (arXiv:1910.01108)",
+          "url": "https://arxiv.org/abs/1910.01108"
+        }
+      ]
     }
   ]
 }

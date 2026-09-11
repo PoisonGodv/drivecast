@@ -18,6 +18,14 @@ DIRECTION_NAMES: dict[str, str] = {
 }
 
 
+class Reference(BaseModel):
+    """题库题/事实卡附带的参考链接,透传到集脚本与复习卡片,供读原文。"""
+
+    title: str
+    url: str
+    note: str = ""
+
+
 # ---------- planner 输出 ----------
 
 class EpisodeOutline(BaseModel):
@@ -26,6 +34,7 @@ class EpisodeOutline(BaseModel):
     goal: str = ""                      # 本集目标(能答出什么)
     objectives: list[str] = Field(default_factory=list)  # 3-5 个目标知识点
     outline: str = ""                   # 一句话大纲
+    covers: list[str] = Field(default_factory=list)  # 本集覆盖的题库题 id(1-6 个)
 
 
 class PlanOut(BaseModel):
@@ -93,6 +102,7 @@ class ScriptOut(BaseModel):
     questions: list[Question] = Field(default_factory=list)
     turns: list[Turn] = Field(default_factory=list)  # 兼容字段；有 sections 时由系统拼装
     sections: list[ScriptSection] = Field(default_factory=list)  # M6 章节的稳定结构源
+    references: list[Reference] = Field(default_factory=list)  # 本集参考链接(题库题 refs 汇总)
 
 
 # ---------- 文件产物(过程态) ----------
@@ -107,6 +117,8 @@ class EpisodeRec(BaseModel):
     objectives: list[str] = Field(default_factory=list)
     outline: str = ""
     depends_on: list[str] = Field(default_factory=list)
+    covers: list[str] = Field(default_factory=list)   # 本集覆盖的题库题 id
+    scheduled_date: str = ""                          # 排期日 YYYY-MM-DD(每日新学 N 集)
     target_minutes: int = 15
     script_format: Literal["monologue", "dialogue"] = "monologue"
     status: Literal["pending", "scripted", "tts_ready", "synth_partial", "ready", "failed"] = "pending"
