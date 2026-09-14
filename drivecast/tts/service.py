@@ -18,6 +18,8 @@ from .chunk import chunk_text
 SILENCE_ROLE_SWITCH_MS = 250
 AUDIO_PIPELINE_VERSION = 7
 SECTION_KEYS = ("S0", "S1", "S2", "S3", "S4")
+OUTRO_KEY = "S5"  # 片尾参考文献口播段(scriptwriter 从已校验链接确定性拼接,不过 LLM)
+CHAPTER_KEYS = SECTION_KEYS + (OUTRO_KEY,)
 # 旧脚本没有结构字段时，用固定内容占比映射到五章；只切元数据，不往口播补段名。
 LEGACY_SECTION_WEIGHTS = (0.07, 0.34, 0.27, 0.20, 0.12)
 
@@ -90,11 +92,11 @@ def _weighted_groups(units: list, lengths: list[int]) -> list[list]:
 
 
 def _section_specs(script: dict) -> list[dict]:
-    """返回不含朗读标签的五段内容；兼容 M6 前脚本并保持确定性。"""
+    """返回不含朗读标签的五段内容 + 可选片尾参考资料段(S5);兼容 M6 前脚本并保持确定性。"""
     titles = settings.chapter_title_list
     raw_sections = script.get("sections") or []
     if raw_sections and tuple(s.get("key") for s in raw_sections) == SECTION_KEYS:
-        return [
+        specs = [
             {
                 "key": key,
                 "title": (section.get("title") or titles[index]).strip(),
@@ -103,6 +105,7 @@ def _section_specs(script: dict) -> list[dict]:
             }
             for index, (key, section) in enumerate(zip(SECTION_KEYS, raw_sections))
         ]
+        return specs + _outro_spec(script)
 
     dialogue = script.get("script_format") == "dialogue" and script.get("turns")
     units = list(script.get("turns") or []) if dialogue else [
@@ -122,7 +125,20 @@ def _section_specs(script: dict) -> list[dict]:
             "turns": group if dialogue else [],
             "content": "\n\n".join(group) if not dialogue else "",
         })
-    return specs
+    return specs + _outro_spec(script)
+
+
+def _outro_spec(script: dict) -> list[dict]:
+    """片尾参考文献口播段:独白式走 expert 正文,对话式由 host 收尾念出。"""
+    outro = (script.get("refs_outro") or "").strip()
+    if not outro:
+        return []
+    spec = {"key": OUTRO_KEY, "title": settings.chapter_title_refs, "content": "", "turns": []}
+    if script.get("script_format") == "dialogue":
+        spec["turns"] = [{"speaker": "host", "text": outro}]
+    else:
+        spec["content"] = outro
+    return [spec]
 
 
 def build_tts_json(script: dict) -> list[dict]:
@@ -175,7 +191,7 @@ def build_tts_json(script: dict) -> list[dict]:
 def _upgrade_legacy_tts(script: dict, payload: dict) -> list[dict]:
     """给旧 tts.json 补章节归属，不重切文本/不改 seq，因此既有 chunk 可原样复用。"""
     chunks = payload.get("chunks") or []
-    if not chunks or all(c.get("section_key") in SECTION_KEYS for c in chunks):
+    if not chunks or all(c.get("section_key") in CHAPTER_KEYS for c in chunks):
         return chunks
     groups = _weighted_groups(chunks, [len(c.get("text", "")) for c in chunks])
     titles = settings.chapter_title_list
@@ -242,6 +258,12 @@ def _gap_ms(chunks: list[dict], index: int) -> int:
             else settings.silence_between_chunks_ms)
 
 
+def _chapter_fallback_title(key: str, index: int) -> str:
+    if key == OUTRO_KEY:
+        return settings.chapter_title_refs
+    return settings.chapter_title_list[min(index, len(SECTION_KEYS) - 1)]
+
+
 def _chapters(chunks: list[dict], durations: list[float]) -> list[dict]:
     """按 chunk 实测时长和插入静音累加时间戳，空段并入下一章而非造零长章节。"""
     starts: dict[str, float] = {}
@@ -253,13 +275,13 @@ def _chapters(chunks: list[dict], durations: list[float]) -> list[dict]:
         cursor += duration + _gap_ms(chunks, index) / 1000
         ends[key] = cursor
     chapters = []
-    for index, key in enumerate(SECTION_KEYS):
+    for index, key in enumerate(CHAPTER_KEYS):
         if key not in starts:
             continue
         chapters.append({
             "key": key,
             "title": next((c.get("section_title") for c in chunks if c.get("section_key") == key),
-                          settings.chapter_title_list[index]),
+                          _chapter_fallback_title(key, index)),
             "start_sec": round(starts[key], 3),
             "end_sec": round(ends[key], 3),
         })

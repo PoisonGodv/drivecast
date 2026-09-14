@@ -109,7 +109,7 @@
           <label class="form-label">目标时长：{{ createForm.targetMinutes }} 分钟 / 集</label>
           <div class="direction-grid">
             <div
-              v-for="m in [10, 15, 20]"
+              v-for="m in [10, 15, 20, 30, 40]"
               :key="m"
               class="direction-option"
               :class="{ active: createForm.targetMinutes === m }"
@@ -801,8 +801,31 @@
     </main>
 
     <div class="toast" :class="{ show: toast }">{{ toast }}</div>
+
+    <!-- 播完参考文献面板:音频自然结束时全局弹出,倒计时自动连播下一集 -->
+    <div v-if="player.endedOpen" class="ended-overlay" @click.self="dismissEndedPanel(false)">
+      <div class="ended-panel" role="dialog" aria-labelledby="ended-panel-title">
+        <div class="ended-panel-kicker">本集播完 · {{ player.episode?.title || '' }}</div>
+        <h2 id="ended-panel-title">参考文献</h2>
+        <ul class="script-references-list ended-refs-list">
+          <li v-for="(ref, ri) in player.endedRefs" :key="ref.url || ri">
+            <a :href="ref.url" target="_blank" rel="noopener">{{ ref.title || ref.url }}</a>
+            <span v-if="ref.note" class="ref-note">{{ ref.note }}</span>
+          </li>
+        </ul>
+        <div class="ended-actions">
+          <button v-if="player.endedHasNext" class="btn btn-primary" @click="dismissEndedPanel(true)">
+            下一集（{{ player.endedCountdown }}s）
+          </button>
+          <button class="btn btn-ghost" @click="replayFromEnded">重听本集</button>
+          <button class="btn btn-ghost" @click="dismissEndedPanel(false)">
+            {{ player.endedHasNext ? '留在本集' : `关闭（${player.endedCountdown}s）` }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 
-  <script type="module" src="/static/js/main.js?v=20260911b"></script>
+  <script type="module" src="/static/js/main.js?v=20260911c"></script>
 </body>
 </html>

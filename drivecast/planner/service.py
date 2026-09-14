@@ -119,7 +119,7 @@ async def create_plan(
     count = episode_count or settings.default_episode_count
     minutes = target_minutes or settings.target_minutes
 
-    user = prompts.planner_user(topic, direction, count)
+    user = prompts.planner_user(topic, direction, count, target_minutes=minutes)
     grounding = _grounding_prompt(direction)
     if grounding:
         user += f"\n\n{grounding}"

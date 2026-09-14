@@ -44,7 +44,7 @@ class TopicOut(BaseModel):
 class PlanCreate(BaseModel):
     topic_id: int = Field(gt=0)
     episode_count: int | None = Field(default=None, ge=4, le=12)
-    target_minutes: int | None = Field(default=None, ge=8, le=25)
+    target_minutes: int | None = Field(default=None, ge=8, le=45)  # 支持到 40 分钟长集(留 5 分钟余量)
 
 
 class PlanGenerateOut(BaseModel):

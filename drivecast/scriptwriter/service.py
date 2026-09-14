@@ -7,6 +7,10 @@
 - S3 依赖 S2 的问法,串行跟进;
 - S4 依赖 S1/S2 的内容,串行收尾,并顺带产出本集 3 道自测题;
 - 每段独立做字数门禁,不合格只重出该段,不牵连其他段。
+
+长集(如 40 分钟)二次拆分:单段目标字数超过 settings.section_max_words_per_agent 时,
+该段再拆成多个并行子 agent(S1 按知识点切片、S2 按题库问法切片、S3 按问法顺序均分),
+各带分工说明独立生成后拼接回原段,单次调用字数始终受控。
 """
 from __future__ import annotations
 
@@ -180,16 +184,23 @@ async def _review(data: dict, ep: EpisodeRec, matched: list[dict]) -> dict:
 async def _gen_section(plan: PlanRec, ep: EpisodeRec, key: str, target_words: int,
                        *, recap_questions: list[str] | None = None,
                        s2_grounding: str = "", context: str = "",
-                       extra_note: str = "") -> tuple[ScriptSection, list[Question], int]:
-    """单段 agent:一次独立 LLM 调用,只写 key 这一段。返回 (section, questions, usage)。"""
-    schema = QuizSectionOut if key == "S4" else SectionOut
+                       extra_note: str = "", part_note: str = "",
+                       plain: bool = False) -> tuple[ScriptSection, list[Question], int]:
+    """单段 agent:一次独立 LLM 调用,只写 key 这一段。返回 (section, questions, usage)。
+
+    part_note:长段拆分时本部分的分工说明(跨重试保留,与 extra_note 修正说明并存)。
+    plain:S4 拆分时非末段不出自测题,用 SectionOut schema。
+    """
+    quiz = key == "S4" and not plain
+    schema = QuizSectionOut if quiz else SectionOut
     user = prompts.section_user(plan, ep, key, target_words,
                                 recap_questions=recap_questions,
-                                s2_grounding=s2_grounding, context=context)
+                                s2_grounding=s2_grounding, context=context,
+                                part_note=part_note)
     if extra_note:
         user += f"\n\n【修正】{extra_note}"
     result = await get_provider().complete(
-        system=prompts.section_system(ep.script_format, key), user=user,
+        system=prompts.section_system(ep.script_format, key, quiz=quiz), user=user,
         schema=schema, temperature=0.75,
     )
     out = result.parsed
@@ -233,9 +244,73 @@ async def _gen_section_checked(plan: PlanRec, ep: EpisodeRec, key: str, target_w
     return section, questions, usage
 
 
+def _split_count(target_words: int) -> int:
+    """该段需要拆成几个并行子 agent;不超上限时恒为 1(行为与拆分前完全一致)。"""
+    max_words = max(1, settings.section_max_words_per_agent)
+    return max(1, -(-target_words // max_words))  # ceil 除法
+
+
+def _contiguous_slices(items: list[str], parts: int) -> list[list[str]]:
+    """把有序要点连续均分成 parts 片(保序,拼接后顺序不变);要点不足时允许空片。"""
+    if not items:
+        return [[] for _ in range(parts)]
+    base, rem = divmod(len(items), parts)
+    slices, start = [], 0
+    for i in range(parts):
+        size = base + (1 if i < rem else 0)
+        slices.append(items[start:start + size])
+        start += size
+    return slices
+
+
+async def _gen_section_split(plan: PlanRec, ep: EpisodeRec, key: str, target_words: int,
+                             *, scope_items: list[str] | None = None,
+                             scope_style: str = "", **kwargs):
+    """长段二次拆分:目标字数超单 agent 上限时,拆成多个并行子 agent 写同一 key 段再拼接。
+
+    每个子 agent 拿到自己的字数预算与分工说明(part_note),S4 拆分时自测题只由末段产出。
+    不拆时直接退回 _gen_section_checked,行为与拆分前逐字节一致。
+    """
+    parts = _split_count(target_words)
+    if parts == 1:
+        return await _gen_section_checked(plan, ep, key, target_words, **kwargs)
+
+    per = max(120, target_words // parts)
+    scopes = _contiguous_slices(list(scope_items or []), parts)
+    print(f"[script] {ep.episode_id} {key} 目标 {target_words} 字超单 agent 上限,拆 {parts} 个子 agent 并行")
+
+    async def _part(index: int):
+        part_kwargs = dict(kwargs)
+        if key == "S2":
+            # 拆分后整段 grounding 改由各部分的 part_note 按切片携带,避免「至少 2 题」与切片冲突
+            part_kwargs.pop("s2_grounding", None)
+        note = prompts.split_part_note(key, index, parts, per, scopes[index], scope_style)
+        return await _gen_section_checked(
+            plan, ep, key, per, part_note=note,
+            plain=key == "S4" and index < parts - 1,  # 自测题只由末段产出
+            **part_kwargs)
+
+    results = await asyncio.gather(*(_part(i) for i in range(parts)))
+    sections = [r[0] for r in results]
+    if ep.script_format == "dialogue":
+        merged = ScriptSection(
+            key=key, title=sections[0].title,
+            turns=[turn for section in sections for turn in section.turns],
+        )
+    else:
+        merged = ScriptSection(
+            key=key, title=sections[0].title,
+            content="\n\n".join(s.content for s in sections if s.content.strip()),
+        )
+    return merged, results[-1][1], sum(r[2] for r in results)
+
+
 async def _gen_sections(plan: PlanRec, ep: EpisodeRec, target_words: int,
                         s2_questions: list[dict]) -> ScriptOut:
-    """分段 agent 编排:S0/S1/S2 并行 → S3 跟 S2 → S4 跟 S1+S2,拼回整集 ScriptOut。"""
+    """分段 agent 编排:S0/S1/S2 并行 → S3 跟 S2 → S4 跟 S1+S2,拼回整集 ScriptOut。
+
+    长集(S1/S2/S3 超单 agent 字数上限)由 _gen_section_split 内部再拆成并行子 agent。
+    """
     targets = {k: max(120, int(target_words * share)) for k, share in _SECTION_SHARE.items()}
     if ep.seq <= 1:
         # 首集 S0 是 30 秒开场而非回顾,预算减半,省下的匀给核心段 S1
@@ -243,17 +318,21 @@ async def _gen_sections(plan: PlanRec, ep: EpisodeRec, target_words: int,
         targets["S0"] -= saved
         targets["S1"] += saved
 
+    # 各段的拆分切片源:S1 按目标知识点,S2 按命中题库问法,S3 按 S2 问法顺序
+    s2_scope = [str(q.get("question", "")).strip() for q in s2_questions if q.get("question")]
     s0, s1, s2 = await asyncio.gather(
         _gen_section_checked(plan, ep, "S0", targets["S0"],
                              recap_questions=_recap_questions(plan, ep.seq)),
-        _gen_section_checked(plan, ep, "S1", targets["S1"]),
-        _gen_section_checked(plan, ep, "S2", targets["S2"],
-                             s2_grounding=_s2_grounding_prompt(s2_questions)),
+        _gen_section_split(plan, ep, "S1", targets["S1"],
+                           scope_items=[str(o) for o in ep.objectives], scope_style="objectives"),
+        _gen_section_split(plan, ep, "S2", targets["S2"],
+                           scope_items=s2_scope, scope_style="questions",
+                           s2_grounding=_s2_grounding_prompt(s2_questions)),
     )
     # S3 的答题框架必须对准 S2 抛出的问法;S4 的坑与自测题要扣住 S1/S2 讲过的内容
-    s3 = await _gen_section_checked(plan, ep, "S3", targets["S3"],
-                                    context=_section_plain(s2[0], ep.script_format))
-    s4 = await _gen_section_checked(
+    s3 = await _gen_section_split(plan, ep, "S3", targets["S3"], scope_style="order",
+                                  context=_section_plain(s2[0], ep.script_format))
+    s4 = await _gen_section_split(
         plan, ep, "S4", targets["S4"],
         context=_section_plain(s1[0], ep.script_format)
                 + "\n\n" + _section_plain(s2[0], ep.script_format))
@@ -267,6 +346,32 @@ async def _gen_sections(plan: PlanRec, ep: EpisodeRec, target_words: int,
     out._sections = _normalise_sections(out, ep.script_format)  # type: ignore[attr-defined]
     out._usage = sum(run[2] for run in runs)  # type: ignore[attr-defined]
     return out
+
+
+_REF_CN_NUMERALS = "一二三四五六"
+
+
+def _references_outro(references: list[dict]) -> str:
+    """片尾参考资料口播(确定性拼接,不过 LLM):只念资料标题,URL 留在文稿末尾点击。
+
+    口播最多念 6 条有标题的;一条可念标题都没有但确有参考链接时,退化为一句总起口播,
+    保证「音频最后一定交代参考文献」。整条列表为空则不出口播。
+    """
+    if not references:
+        return ""
+    closer = "这些资料的链接已经附在本集文稿末尾,到站之后欢迎点开读原文。"
+    titles: list[str] = []
+    for ref in references:
+        title = str(ref.get("title") or "").strip()
+        url = str(ref.get("url") or "").strip()
+        if title and title != url:
+            titles.append(title[:40])  # 超长标题截断,口播不念又臭又长的页面名
+    if not titles:
+        return f"本期内容参考了若干资料,{closer}"
+    spoken = ";".join(
+        f"第{_REF_CN_NUMERALS[i]}条,{title}" for i, title in enumerate(titles[:6])
+    )
+    return f"本期内容参考了以下资料:{spoken}。{closer}"
 
 
 async def write_script(plan: PlanRec, ep: EpisodeRec, *, force: bool = False) -> dict:
@@ -318,6 +423,17 @@ async def write_script(plan: PlanRec, ep: EpisodeRec, *, force: bool = False) ->
     else:
         references = await hunter.hunt_references(plan, ep, matched, cards)
     data["references"] = references  # 供复习卡片/脚本页读原文;旧脚本无此字段,读取处用 .get
+
+    # 片尾参考文献口播(docs/03 §2):拼进文稿末尾(展示与音频一致),TTS 落成 S5 章节;
+    # 在审稿之后追加——口播内容确定性地来自已校验链接,无事实性风险,不送审
+    outro = _references_outro(references)
+    if outro:
+        data["refs_outro"] = outro
+        if ep.script_format == "dialogue":
+            data["content"] += f"\n\n主持人:{outro}"
+            data["turns"].append({"speaker": "host", "text": outro})
+        else:
+            data["content"] += f"\n\n{outro}"
 
     save_script(ep.episode_id, data)
     _wipe_derived(ep.episode_id)  # 脚本变了,下游产物全部作废

@@ -35,10 +35,16 @@ export const player = {
     sizeBytes: 0,
     jumpToChapter: (startSec) => seekToTime(startSec),
     error: '',
+    // 播完参考文献面板:音频自然结束时展示本集参考链接,倒计时自动连播下一集
+    endedOpen: false,
+    endedRefs: [],
+    endedHasNext: false,
+    endedCountdown: 0,
   }),
 
   audio: new Audio(),
   progressTimer: null,
+  endedTimer: null,
 }
 
 const audio = player.audio
@@ -226,6 +232,65 @@ export function toggleTranscript() {
   }
 }
 
+/* ---------- 播完参考文献面板 ---------- */
+
+const ENDED_AUTONEXT_SEC = 15
+
+function clearEndedTimer() {
+  if (player.endedTimer) {
+    clearInterval(player.endedTimer)
+    player.endedTimer = null
+  }
+}
+
+export function dismissEndedPanel(advance = false) {
+  clearEndedTimer()
+  player.state.endedOpen = false
+  player.state.endedRefs = []
+  if (advance) nextEpisode()
+}
+
+export function replayFromEnded() {
+  dismissEndedPanel(false)
+  seekToTime(0)
+  play()
+}
+
+function hasNextReadyEpisode() {
+  const current = player.state.episode
+  if (!current || !player.state.plan) return false
+  return sortedReadyEpisodes().some((e) => e.seq > current.seq)
+}
+
+async function onEpisodeEnded() {
+  // 参考文献优先复用已加载文稿,否则现取;取不到/为空则保持原行为直接连播
+  let refs = Array.isArray(player.state.script?.references) ? player.state.script.references : null
+  if (refs === null && player.state.episodeId) {
+    try {
+      const script = await api.getScript(player.state.episodeId)
+      if (!player.state.script) player.state.script = script
+      refs = Array.isArray(script.references) ? script.references : []
+    } catch {
+      refs = []
+    }
+  }
+  if (!refs?.length) {
+    nextEpisode()
+    return
+  }
+  player.state.endedRefs = refs
+  player.state.endedHasNext = hasNextReadyEpisode()
+  player.state.endedOpen = true
+  player.state.endedCountdown = ENDED_AUTONEXT_SEC
+  clearEndedTimer()
+  player.endedTimer = setInterval(() => {
+    player.state.endedCountdown -= 1
+    if (player.state.endedCountdown > 0) return
+    // 没有下一集可连播时倒计时归零仅收起面板(本集已停在末尾)
+    dismissEndedPanel(player.state.endedHasNext)
+  }, 1000)
+}
+
 function findEpisodeById(id) {
   return player.state.plan?.episodes?.find((e) => String(e.id) === String(id))
 }
@@ -273,6 +338,7 @@ export async function loadEpisode(episodeId, plan) {
     return
   }
 
+  dismissEndedPanel(false)  // 切集时收起播完面板(若正开着)并取消连播倒计时
   player.state.error = ''
   player.state.episodeId = String(episodeId)
   player.state.planId = plan?.id || 0
@@ -336,7 +402,7 @@ audio.addEventListener('durationchange', () => {
 
 audio.addEventListener('ended', () => {
   saveProgress()
-  nextEpisode()
+  void onEpisodeEnded()
 })
 
 audio.addEventListener('error', (e) => {

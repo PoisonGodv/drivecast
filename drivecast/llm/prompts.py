@@ -31,13 +31,13 @@ PLANNER_SYSTEM = f"""你是资深后端架构师与技术面试官,为一位资�
 {NO_FLUFF}"""
 
 
-def planner_user(topic: str, direction: str, episode_count: int) -> str:
+def planner_user(topic: str, direction: str, episode_count: int, target_minutes: int = 15) -> str:
     return f"""主题「{topic}」,方向 {direction}({DIRECTION_NAMES.get(direction, direction)}),拆 {episode_count} 集。
 
 方向侧重:{DIRECTION_HINTS.get(direction, "")}
 
 要求:
-1. 每集是一个可被 15 分钟讲透、且能在面试中独立成问的知识单元。太大必须拆,太小合并。
+1. 每集是一个可被 {target_minutes} 分钟讲透、且能在面试中独立成问的知识单元。太大必须拆,太小合并。
 2. 集按「原理 → 实现 → 权衡/对比 → 实战/排障 → 系统设计串联」递进排列,可被面试连环追问。
 3. 每集给出:标题 / goal(听完能答出什么,一句话) / 3-5 个目标知识点 objectives / 一句话大纲 outline。
 4. 标题要具体到面试题粒度,不要「XX 简介」这种泛泛标题。
@@ -97,8 +97,11 @@ _QUIZ_FIELD = (
 )
 
 
-def section_system(script_format: str, key: str) -> str:
-    """单段 agent 的 system prompt:角色 + 本段使命 + 口播红线 + 输出字段。"""
+def section_system(script_format: str, key: str, *, quiz: bool = True) -> str:
+    """单段 agent 的 system prompt:角色 + 本段使命 + 口播红线 + 输出字段。
+
+    quiz=False 用于 S4 被拆成多部分时的非末段:不出自测题(schema 也不含该字段)。
+    """
     if script_format == "dialogue":
         head = "你是资深技术面试官与播客制作人,负责双人对话式中文通勤播客脚本的一个段落,面试学习导向。"
         missions = _DIALOGUE_MISSIONS
@@ -113,14 +116,14 @@ def section_system(script_format: str, key: str) -> str:
                   "- content:本段自然口播正文,不要复述 title。\n"
                   "- turns:留空数组。")
         role = ""
-    quiz = _QUIZ_FIELD if key == "S4" else ""
-    parts = [head, AUDIENCE, NO_FLUFF, role, missions[key], _SPEECH_RULES, output + quiz]
+    quiz_field = _QUIZ_FIELD if key == "S4" and quiz else ""
+    parts = [head, AUDIENCE, NO_FLUFF, role, missions[key], _SPEECH_RULES, output + quiz_field]
     return "\n\n".join(p for p in parts if p)
 
 
 def section_user(plan: PlanRec, ep: EpisodeRec, key: str, target_words: int, *,
                  recap_questions: list[str] | None = None,
-                 s2_grounding: str = "", context: str = "") -> str:
+                 s2_grounding: str = "", context: str = "", part_note: str = "") -> str:
     """单段 agent 的 user prompt:全集上下文 + 本段专属输入 + 字数预算。"""
     parts = [f"""学习计划:「{plan.title}」(方向 {plan.direction},{DIRECTION_NAMES.get(plan.direction, "")})
 本集是第 {ep.seq} 集:「{ep.title}」
@@ -136,8 +139,44 @@ def section_user(plan: PlanRec, ep: EpisodeRec, key: str, target_words: int, *,
         parts.append(s2_grounding)
     if context:
         parts.append(f"【已写好的相邻段落,保持衔接与口径一致,不要重复其内容】\n{context}")
+    if part_note:
+        parts.append(f"【分工】{part_note}")
     parts.append(f"本段目标字数:约 {target_words} 字。写足,不要缩水。")
     return "\n\n".join(parts)
+
+
+def split_part_note(key: str, index: int, parts: int, per_words: int,
+                    scope: list[str], scope_style: str) -> str:
+    """长段拆分时给第 index 个子 agent 的分工说明(40 分钟长集:单段超出单 agent 字数上限)。
+
+    scope_style: objectives=按知识点切片(S1) / questions=按题库问法切片(S2) /
+    order=按上下文问法顺序均分(S3);空=只给接力位置约束。
+    """
+    lines = [
+        f"本段篇幅较长,由 {parts} 个部分接力合写,你负责第 {index + 1}/{parts} 部分"
+        f"(约 {per_words} 字),只写自己这部分,完成后会自动拼接成完整一段,不要写段标或部分编号。",
+    ]
+    items = [str(item).strip() for item in scope if str(item).strip()]
+    if items and scope_style == "objectives":
+        lines.append("你只负责讲透以下知识点,其余知识点由其他部分负责,绝对不要提前展开:\n"
+                     + "\n".join(f"- {item}" for item in items))
+    elif items and scope_style == "questions":
+        lines.append("本部分必须覆盖以下题库高频问法(至少 1 题,可改写题面但保留考点),"
+                     "其余问法由其他部分负责,不要越界:\n"
+                     + "\n".join(f"- {item}" for item in items))
+    elif scope_style == "order":
+        lines.append(f"把给定上下文中的问法按出现顺序均分为 {parts} 组,"
+                     f"你只写第 {index + 1} 组问法的答题框架,其他组不要写。")
+    if index == 0:
+        lines.append("你是第一部分:直接从正题开始,不要写「承接上文」式过渡;"
+                     "讲到你的内容结束自然停住,不要总结收尾。")
+    elif index == parts - 1:
+        lines.append("你是最后一部分:不要写开场寒暄,不要重复前面部分已讲的内容,"
+                     "负责把本段讲到自然收尾。")
+    else:
+        lines.append("你是中间部分:不要写开场寒暄和承上启下的废话,"
+                     "直接进入分配给你的内容,也不要总结收尾。")
+    return "\n".join(lines)
 
 
 def recap_of(ep_questions: list) -> list[str]:

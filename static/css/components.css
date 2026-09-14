@@ -664,6 +664,53 @@
   font-size: 0.75rem;
 }
 
+/* 播完参考文献面板:全屏遮罩 + 居中卡片,倒计时自动连播 */
+.ended-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.ended-panel {
+  width: 100%;
+  max-width: 520px;
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-elevated);
+}
+
+.ended-panel-kicker {
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ended-panel h2 {
+  margin: 0 0 12px;
+  font-size: 1.15rem;
+}
+
+.ended-refs-list {
+  margin-bottom: 16px;
+}
+
+.ended-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 /* 复习翻卡 */
 .review-header {
   display: flex;

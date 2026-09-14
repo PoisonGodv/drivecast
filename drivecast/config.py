@@ -56,12 +56,13 @@ class Settings(BaseSettings):
     loudness_lra: float = 11.0
     silence_between_chunks_ms: int = 100   # 同角色段间停顿
     chapter_titles: str = "回顾与开场|核心知识点|高频面试问法|答题框架|易错点与自测"
+    chapter_title_refs: str = "参考资料"   # 片尾参考文献口播段(S5)章节名
     audio_artist: str = "DriveCast"
     audio_cover_path: Path = PROJECT_ROOT / "static" / "assets" / "cover.png"
 
     # ---- M6 质量校验/校准(只给建议,绝不回写 .env) ----
     quality_min_minutes: float = 8.0
-    quality_max_minutes: float = 22.0
+    quality_max_minutes: float = 45.0    # 上限覆盖 40 分钟长集(docs/01 §2.1)
     quality_duration_error_pct: float = 10.0
     quality_max_peak_db: float = -0.5
     speech_rate_history_window: int = 20
@@ -70,6 +71,9 @@ class Settings(BaseSettings):
     # ---- 内容(docs/01 §2.1 / 03 §6.1)----
     target_minutes: int = 15
     words_per_minute: int = 300     # rate=-5% 实测 280-320,合成后 ffprobe 回填校准
+    # 单段单 agent 字数上限:超出则把该段拆成多个并行子 agent 再拼接(40 分钟长集必备,
+    # 单次调用写 4000+ 字又慢又容易缩水);2400 字 ≈ 8 分钟口播,与既有 15/20 分钟集的单段量级一致
+    section_max_words_per_agent: int = 2400
     default_episode_count: int = 6
     daily_new_episodes: int = 1     # 每日新学集数:计划排期按 (seq-1)//N 天递进
 

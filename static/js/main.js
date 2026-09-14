@@ -6,10 +6,10 @@
  */
 
 import { createApp, reactive } from '../vendor/petite-vue.js'
-import { api, connectPlanEvents } from './api.js?v=20260911b'
-import { player, loadEpisode, togglePlay, seek, seekToRatio, cycleRate, toggleTranscript, formatTime, nextEpisode, previousEpisode } from './player.js?v=20260911b'
-import { store } from './store.js?v=20260911b'
-import { useReview, isDue, formatDate, masteryLabels, directionNames } from './review.js?v=20260911b'
+import { api, connectPlanEvents } from './api.js?v=20260911c'
+import { player, loadEpisode, togglePlay, seek, seekToRatio, cycleRate, toggleTranscript, formatTime, nextEpisode, previousEpisode, dismissEndedPanel, replayFromEnded } from './player.js?v=20260911c'
+import { store } from './store.js?v=20260911c'
+import { useReview, isDue, formatDate, masteryLabels, directionNames } from './review.js?v=20260911c'
 
 const DIRECTIONS = [
   { key: 'backend_arch', label: '后端/架构面试' },
@@ -411,6 +411,8 @@ const appState = reactive({
   toggleTranscript,
   nextEpisode,
   previousEpisode,
+  dismissEndedPanel,
+  replayFromEnded,
 })
 
 window.addEventListener('hashchange', () => appState.applyRoute())
