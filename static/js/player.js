@@ -6,8 +6,9 @@
  */
 
 import { reactive } from '../vendor/petite-vue.js'
-import { api } from './api.js?v=20260911b'
-import { store } from './store.js?v=20260911b'
+import { getSession, isCurrentSession, onSessionChange } from './session.js'
+import { api, withToken } from './api.js?v=20260914b'
+import { store } from './store.js?v=20260914b'
 
 export const playbackRates = [0.75, 1, 1.25, 1.5, 2]
 
@@ -48,6 +49,35 @@ export const player = {
 }
 
 const audio = player.audio
+const initialState = JSON.stringify(player.state)
+let playbackOwner = null
+let loadGeneration = 0
+function ownsPlayback() {
+  return playbackOwner && isCurrentSession(playbackOwner) && Boolean(player.state.episodeId)
+}
+function playbackGuard() {
+  const generation = loadGeneration
+  return () => ownsPlayback() && generation === loadGeneration
+}
+
+export function resetPlayer() {
+  // 先废弃归属/集 ID，再 pause，避免 pause 事件替新账号上报旧进度。
+  playbackOwner = null
+  loadGeneration += 1
+  stopProgressTimer()
+  clearEndedTimer()
+  Object.assign(player.state, JSON.parse(initialState))
+  audio.pause()
+  audio.removeAttribute('src')
+  audio.load()
+  lastPositionReport = 0
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.metadata = null
+    navigator.mediaSession.playbackState = 'none'
+    try { navigator.mediaSession.setPositionState?.() } catch { /* Safari */ }
+  }
+}
+onSessionChange(resetPlayer)
 
 function formatTime(totalSeconds) {
   if (!isFinite(totalSeconds) || totalSeconds < 0) return '0:00'
@@ -102,7 +132,7 @@ installMediaSessionHandlers()
 function saveProgress() {
   const sec = Math.floor(audio.currentTime || 0)
   const id = player.state.episodeId
-  if (!id) return
+  if (!id || !ownsPlayback()) return
   store.setPosition(id, sec)
   api.postProgress(id, sec).catch((err) => {
     console.warn('进度上报失败', err)
@@ -124,8 +154,10 @@ function stopProgressTimer() {
 }
 
 function play() {
-  if (!player.state.episodeId) return
+  if (!ownsPlayback()) return
+  const current = playbackGuard()
   audio.play().catch((err) => {
+    if (!current()) return
     // 无手势自动播放被浏览器策略拒绝(NotAllowedError)不是故障:
     // 页面已就绪,用户点 ▶ 即可,不该显示吓人的"播放失败"。
     if (err && (err.name === 'NotAllowedError' || err.name === 'AbortError')) return
@@ -174,15 +206,17 @@ function updateCurrentChapter(currentTime = audio.currentTime || 0) {
 }
 
 async function loadAudioMeta(episodeId) {
+  const current = playbackGuard()
   player.state.audioMetaLoading = true
   player.state.audioMetaLoaded = false
   try {
     const meta = await api.getAudioMeta(episodeId)
-    if (String(player.state.episodeId) !== String(episodeId)) return
+    if (!current()) return
     player.state.chapters = Array.isArray(meta.chapters) ? meta.chapters : []
     player.state.quality = meta.quality || null
     player.state.durationEstimate = meta.duration_estimate || null
-    player.state.downloadUrl = meta.download_url || `/api/episodes/${episodeId}/audio/download`
+    // <a href> 下载无法带 Authorization 头,经 ?token= 鉴权(后端白名单 GET 端点)
+    player.state.downloadUrl = withToken(meta.download_url || `/api/episodes/${episodeId}/audio/download`)
     player.state.sizeBytes = Number(meta.size_bytes) || 0
     player.state.audioMetaLoaded = true
     if (Number(meta.duration_sec) > 0 && !audio.duration) {
@@ -190,12 +224,12 @@ async function loadAudioMeta(episodeId) {
     }
     updateCurrentChapter(player.state.currentTime)
   } catch (err) {
-    if (String(player.state.episodeId) !== String(episodeId)) return
+    if (!current()) return
     // 元数据是增强信息,失败不阻断播放和旧音频使用。
     console.warn('音频元数据加载失败', err)
-    player.state.downloadUrl = `/api/episodes/${episodeId}/audio/download`
+    player.state.downloadUrl = withToken(`/api/episodes/${episodeId}/audio/download`)
   } finally {
-    if (String(player.state.episodeId) === String(episodeId)) {
+    if (current()) {
       player.state.audioMetaLoading = false
     }
   }
@@ -216,17 +250,22 @@ export function cycleRate() {
 }
 
 export function toggleTranscript() {
+  if (!ownsPlayback()) return
+  const current = playbackGuard()
   player.state.transcriptOpen = !player.state.transcriptOpen
   if (player.state.transcriptOpen && !player.state.script && player.state.episodeId) {
     player.state.scriptLoading = true
     api.getScript(player.state.episodeId)
       .then((s) => {
+        if (!current()) return
         player.state.script = s
       })
       .catch((err) => {
+        if (!current()) return
         player.state.script = { content_md: `文稿加载失败：${err.message}` }
       })
       .finally(() => {
+        if (!current()) return
         player.state.scriptLoading = false
       })
   }
@@ -263,17 +302,21 @@ function hasNextReadyEpisode() {
 }
 
 async function onEpisodeEnded() {
+  const current = playbackGuard()
+  if (!current()) return
   // 参考文献优先复用已加载文稿,否则现取;取不到/为空则保持原行为直接连播
   let refs = Array.isArray(player.state.script?.references) ? player.state.script.references : null
   if (refs === null && player.state.episodeId) {
     try {
       const script = await api.getScript(player.state.episodeId)
+      if (!current()) return
       if (!player.state.script) player.state.script = script
       refs = Array.isArray(script.references) ? script.references : []
     } catch {
       refs = []
     }
   }
+  if (!current()) return
   if (!refs?.length) {
     nextEpisode()
     return
@@ -284,6 +327,7 @@ async function onEpisodeEnded() {
   player.state.endedCountdown = ENDED_AUTONEXT_SEC
   clearEndedTimer()
   player.endedTimer = setInterval(() => {
+    if (!current()) return
     player.state.endedCountdown -= 1
     if (player.state.endedCountdown > 0) return
     // 没有下一集可连播时倒计时归零仅收起面板(本集已停在末尾)
@@ -331,13 +375,15 @@ export async function loadEpisode(episodeId, plan) {
    * 加载并准备播放一集。
    * plan 对象须包含 episodes 数组（docs/02 §4 详情契约）。
    */
-  if (!episodeId) return
+  if (!episodeId || !store.getToken()) return
   const ep = plan?.episodes?.find((e) => String(e.id) === String(episodeId))
   if (!ep) {
     player.state.error = '未找到该集'
     return
   }
 
+  playbackOwner = getSession()
+  loadGeneration += 1
   dismissEndedPanel(false)  // 切集时收起播完面板(若正开着)并取消连播倒计时
   player.state.error = ''
   player.state.episodeId = String(episodeId)
@@ -352,7 +398,7 @@ export async function loadEpisode(episodeId, plan) {
   player.state.currentChapterIndex = -1
   player.state.quality = null
   player.state.durationEstimate = null
-  player.state.downloadUrl = `/api/episodes/${episodeId}/audio/download`
+  player.state.downloadUrl = withToken(`/api/episodes/${episodeId}/audio/download`)
   player.state.sizeBytes = 0
 
   const saved = store.getPosition(String(episodeId))
@@ -363,7 +409,8 @@ export async function loadEpisode(episodeId, plan) {
   if (epDuration > 0 && start >= epDuration - 1) start = 0
   start = Math.max(0, start)
 
-  audio.src = `/api/episodes/${episodeId}/audio`
+  // <audio src> 无法自定义请求头,音频流经 ?token= 鉴权(后端白名单 GET 端点)
+  audio.src = withToken(`/api/episodes/${episodeId}/audio`)
   audio.playbackRate = player.state.playbackRate
   audio.currentTime = start
   player.state.currentTime = start
@@ -378,17 +425,20 @@ export async function loadEpisode(episodeId, plan) {
 
 // audio 事件绑定
 audio.addEventListener('play', () => {
+  if (!ownsPlayback()) return
   player.state.playing = true
   startProgressTimer()
 })
 
 audio.addEventListener('pause', () => {
+  if (!ownsPlayback()) return
   player.state.playing = false
   stopProgressTimer()
   saveProgress()
 })
 
 audio.addEventListener('timeupdate', () => {
+  if (!ownsPlayback()) return
   player.state.currentTime = audio.currentTime || 0
   updateCurrentChapter(player.state.currentTime)
   if (audio.buffered.length) {
@@ -397,21 +447,25 @@ audio.addEventListener('timeupdate', () => {
 })
 
 audio.addEventListener('durationchange', () => {
+  if (!ownsPlayback()) return
   player.state.duration = audio.duration || 0
 })
 
 audio.addEventListener('ended', () => {
+  if (!ownsPlayback()) return
   saveProgress()
   void onEpisodeEnded()
 })
 
 audio.addEventListener('error', (e) => {
+  if (!ownsPlayback()) return
   player.state.error = `音频加载失败：${audio.error?.message || '未知错误'}`
 })
 
 // 锁屏进度节流上报（每 5s 一次）
 let lastPositionReport = 0
 audio.addEventListener('timeupdate', () => {
+  if (!ownsPlayback()) return
   const now = Date.now()
   if (now - lastPositionReport < 5000) return
   lastPositionReport = now

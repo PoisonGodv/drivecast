@@ -36,10 +36,12 @@ class PlanDeletionFence:
     running_job_ids: list[int]
 
 
-async def enqueue(kind: str, ep_ext_id: str, payload: dict) -> int:
+async def enqueue(kind: str, ep_ext_id: str, payload: dict, user_id: int | None = None) -> int:
     """入队(幂等:同 kind+ref_id 的未完成 job 已存在则复用;计划非存活拒绝)。
 
     存活 = active / generating(大纲异步生成中);cancelled/删除等终态一律拒绝。
+    user_id 为 job 归属(末位可选参数,旧调用不传 → ORM default=1=admin);
+    worker 链式入队应传父 job.user_id。
     """
     async with session() as s:
         plan_ext_id = str(payload.get("plan_id") or "")
@@ -56,7 +58,10 @@ async def enqueue(kind: str, ep_ext_id: str, payload: dict) -> int:
         )
         if existing is not None:
             return existing
-        job = Job(kind=kind, ref_id=ep_ext_id, payload=json.dumps(payload, ensure_ascii=False))
+        job = Job(
+            kind=kind, ref_id=ep_ext_id, payload=json.dumps(payload, ensure_ascii=False),
+            user_id=user_id if user_id is not None else 1,
+        )
         s.add(job)
         await s.commit()
         return job.id
@@ -139,11 +144,13 @@ async def cancel_plan_jobs(plan_ext_id: str) -> int:
         return result.rowcount
 
 
-async def enqueue_episode(plan_id: str, seq: int, ep_ext_id: str) -> int:
-    return await enqueue("script", ep_ext_id, {"plan_id": plan_id, "seq": seq})
+async def enqueue_episode(
+    plan_id: str, seq: int, ep_ext_id: str, user_id: int | None = None
+) -> int:
+    return await enqueue("script", ep_ext_id, {"plan_id": plan_id, "seq": seq}, user_id=user_id)
 
 
-async def enqueue_plan_all(plan) -> list[int]:
+async def enqueue_plan_all(plan, user_id: int | None = None) -> list[int]:
     """整计划批量；旧成品缺当前音频元数据时只排本地后处理，不调 LLM/TTS。"""
     from ..config import settings
     from ..tts.service import AUDIO_PIPELINE_VERSION
@@ -160,8 +167,9 @@ async def enqueue_plan_all(plan) -> list[int]:
                     pipeline_version = 0
             if pipeline_version < AUDIO_PIPELINE_VERSION:
                 job_ids.append(await enqueue(
-                    "audio_upgrade", ep.episode_id, {"plan_id": plan.plan_id, "seq": ep.seq}
+                    "audio_upgrade", ep.episode_id,
+                    {"plan_id": plan.plan_id, "seq": ep.seq}, user_id=user_id,
                 ))
             continue
-        job_ids.append(await enqueue_episode(plan.plan_id, ep.seq, ep.episode_id))
+        job_ids.append(await enqueue_episode(plan.plan_id, ep.seq, ep.episode_id, user_id=user_id))
     return job_ids

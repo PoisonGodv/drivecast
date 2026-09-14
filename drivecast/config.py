@@ -93,6 +93,10 @@ class Settings(BaseSettings):
     worker_enabled: bool = True                 # 验收/维护时用 WORKER_ENABLED=false 关闭消费
     worker_stale_running_sec: int = 3600        # running 超过该时长视为孤儿,空轮询时复位 pending
 
+    # ---- 认证(用户名+密码登录,HS256 JWT)----
+    auth_secret: str = ""               # JWT 签名密钥;空=进程级随机(重启后所有 token 失效),部署必配
+    auth_token_expire_days: int = 7     # token 有效期(天);无刷新/撤销,自然过期
+
     # ---- 路径 ----
     data_dir: Path = PROJECT_ROOT / "data"
 

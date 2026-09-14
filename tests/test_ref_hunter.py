@@ -101,6 +101,10 @@ class HunterTest(unittest.IsolatedAsyncioTestCase):
             settings.ref_search_api_key,
             settings.ref_max_results,
         )
+        settings.ref_hunter_enabled = True
+        settings.ref_search_provider = "none"
+        settings.ref_search_api_key = ""
+        settings.ref_max_results = 5
         self._factory = hunter._client_factory
         hunter._client_factory = FakeClient
         FakeClient.verdicts = {}

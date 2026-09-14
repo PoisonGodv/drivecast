@@ -5,17 +5,18 @@ import asyncio
 import json
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
+from ..auth import get_current_user
 from ..db import session
 from ..jobs import pipeline
 from ..library import artifacts
 from ..library import service as library_service
-from ..models import Job, Plan, Script, Topic
+from ..models import Job, Plan, Script, Topic, User
 from ..persist import (
     finalize_plan_deletion,
     set_episode_status,
@@ -105,10 +106,10 @@ class ScriptOut(BaseModel):
 # ---------- topics ----------
 
 @router.post("/topics", response_model=TopicOut, status_code=201)
-async def create_topic(body: TopicCreate) -> dict:
-    """创建主题(docs/02 §4)。"""
+async def create_topic(body: TopicCreate, user: User = Depends(get_current_user)) -> dict:
+    """创建主题(docs/02 §4);归属当前用户。"""
     async with session() as s:
-        t = Topic(title=body.title, direction=body.direction)
+        t = Topic(title=body.title, direction=body.direction, user_id=user.id)
         s.add(t)
         await s.commit()
         await s.refresh(t)
@@ -121,21 +122,27 @@ async def create_topic(body: TopicCreate) -> dict:
 # ---------- plans ----------
 
 @router.post("/plans", response_model=PlanGenerateOut, status_code=201)
-async def create_plan(body: PlanCreate) -> dict:
+async def create_plan(body: PlanCreate, user: User = Depends(get_current_user)) -> dict:
     """由主题生成学习计划(docs/02 §4):落 generating 占位 + 入 plan job,立即返回。
 
     大模型出大纲真实耗时可达数分钟,同步等待会被浏览器/网关超时击杀;
     大纲由 worker 异步生成,完成后占位行转正 active 并链式入队各集 script job,
-    进度由 SSE 推送(docs/04 §3)。
+    进度由 SSE 推送(docs/04 §3)。topic/占位 plan/job 全部写入当前用户归属。
     """
     async with session() as s:
-        topic = await s.get(Topic, body.topic_id)
+        topic = await s.scalar(
+            select(Topic).where(Topic.id == body.topic_id, Topic.user_id == user.id)
+        )
         if topic is None:
             raise HTTPException(status_code=404, detail={"code": 404, "message": "topic not found"})
 
         # 服务端幂等兜底:同主题已有生成中的计划直接复用(配合前端防抖)
         existing = await s.scalar(
-            select(Plan).where(Plan.topic_id == topic.id, Plan.status == "generating")
+            select(Plan).where(
+                Plan.topic_id == topic.id,
+                Plan.status == "generating",
+                Plan.user_id == user.id,
+            )
         )
 
     if existing is not None:
@@ -145,14 +152,14 @@ async def create_plan(body: PlanCreate) -> dict:
             "direction": topic.direction,
             "episode_count": body.episode_count,
             "target_minutes": body.target_minutes,
-        })
+        }, user_id=user.id)
         return {"plan_id": existing.id, "job_id": job_id, "status": "pending", "job_ids": [job_id]}
 
     plan_ext_id = await planner.new_plan_id()
     async with session() as s:
         placeholder = Plan(
             ext_id=plan_ext_id, topic_id=topic.id, title=topic.title,
-            status="generating", episode_count=0,
+            status="generating", episode_count=0, user_id=user.id,
         )
         s.add(placeholder)
         try:
@@ -171,7 +178,7 @@ async def create_plan(body: PlanCreate) -> dict:
             "direction": topic.direction,
             "episode_count": body.episode_count,
             "target_minutes": body.target_minutes,
-        })
+        }, user_id=user.id)
     except Exception:
         # 入队失败不能留下无任务的 generating 占位(永久卡住),回滚占位行让前端可重试
         async with session() as s:
@@ -183,25 +190,25 @@ async def create_plan(body: PlanCreate) -> dict:
 
 
 @router.get("/plans")
-async def list_plans() -> list[dict]:
-    """计划列表(docs/02 §4)。"""
-    return await library_service.list_plans()
+async def list_plans(user: User = Depends(get_current_user)) -> list[dict]:
+    """计划列表(docs/02 §4);只含当前用户的计划。"""
+    return await library_service.list_plans(user_id=user.id)
 
 
 @router.get("/plans/{plan_id}")
-async def get_plan(plan_id: int) -> dict:
-    """计划详情(docs/02 §4 示例)。"""
-    detail = await library_service.get_plan(plan_id)
+async def get_plan(plan_id: int, user: User = Depends(get_current_user)) -> dict:
+    """计划详情(docs/02 §4 示例);跨用户与不存在同 404,不泄露存在性。"""
+    detail = await library_service.get_plan(plan_id, user_id=user.id)
     if detail is None:
         raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
     return detail
 
 
 @router.delete("/plans/{plan_id}", response_model=PlanDeleteOut)
-async def delete_plan(plan_id: int) -> dict:
+async def delete_plan(plan_id: int, user: User = Depends(get_current_user)) -> dict:
     """永久删除计划:设置栅栏、终止正在执行的任务、清理全部文件与数据库图。"""
     from ..jobs import worker
-    plan_row = await library_service.get_plan_by_id(plan_id)
+    plan_row = await library_service.get_plan_by_id(plan_id, user_id=user.id)
     if plan_row is None:
         raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
 
@@ -246,28 +253,28 @@ async def _assert_plan_active(plan_row) -> None:
 # ---------- episodes / jobs ----------
 
 @router.post("/episodes/{episode_id}/generate", response_model=EpisodeGenerateOut)
-async def generate_episode(episode_id: int) -> dict:
+async def generate_episode(episode_id: int, user: User = Depends(get_current_user)) -> dict:
     """触发单集 script → tts 链(docs/02 §4)。"""
-    ep = await library_service.get_episode(episode_id)
+    ep = await library_service.get_episode(episode_id, user_id=user.id)
     if ep is None:
         raise HTTPException(status_code=404, detail={"code": 404, "message": "episode not found"})
-    plan = await library_service.get_plan_by_id(ep.plan_id)
+    plan = await library_service.get_plan_by_id(ep.plan_id, user_id=user.id)
     if plan is None:
         raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
     await _assert_plan_active(plan)
-    job_id = await pipeline.enqueue_episode(plan.ext_id, ep.seq, ep.ext_id)
+    job_id = await pipeline.enqueue_episode(plan.ext_id, ep.seq, ep.ext_id, user_id=user.id)
     return {"episode_id": episode_id, "job_id": job_id, "status": "pending"}
 
 
 @router.post("/plans/{plan_id}/generate_all", response_model=PlanGenerateOut)
-async def generate_plan_all(plan_id: int) -> dict:
+async def generate_plan_all(plan_id: int, user: User = Depends(get_current_user)) -> dict:
     """整计划批量生成(docs/02 §4)。"""
-    plan_row = await library_service.get_plan_by_id(plan_id)
+    plan_row = await library_service.get_plan_by_id(plan_id, user_id=user.id)
     if plan_row is None:
         raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
     await _assert_plan_active(plan_row)
     plan_rec = planner.load_plan(plan_row.ext_id)
-    job_ids = await pipeline.enqueue_plan_all(plan_rec)
+    job_ids = await pipeline.enqueue_plan_all(plan_rec, user_id=user.id)
     status = "pending" if job_ids else "done"
     return {
         "plan_id": plan_id,
@@ -278,11 +285,11 @@ async def generate_plan_all(plan_id: int) -> dict:
 
 
 @router.get("/jobs/{job_id}", response_model=JobOut)
-async def get_job(job_id: int) -> dict:
-    """任务状态查询(SSE 断线兜底;docs/02 §4)。"""
+async def get_job(job_id: int, user: User = Depends(get_current_user)) -> dict:
+    """任务状态查询(SSE 断线兜底;docs/02 §4);跨用户 job 与不存在同 404。"""
     async with session() as s:
         job = await s.get(Job, job_id)
-        if job is None:
+        if job is None or job.user_id != user.id:
             raise HTTPException(status_code=404, detail={"code": 404, "message": "job not found"})
         return {
             "id": job.id, "kind": job.kind, "ref_id": job.ref_id,
@@ -294,12 +301,14 @@ async def get_job(job_id: int) -> dict:
 
 
 @router.post("/episodes/{episode_id}/regenerate", response_model=EpisodeGenerateOut)
-async def regenerate_episode(episode_id: int, body: RegenerateIn | None = None) -> dict:
+async def regenerate_episode(
+    episode_id: int, body: RegenerateIn | None = None, user: User = Depends(get_current_user)
+) -> dict:
     """勘误重生成(docs/07 §5):备份旧产物 → 状态重置 → 复用 script job 队列。"""
-    ep = await library_service.get_episode(episode_id)
+    ep = await library_service.get_episode(episode_id, user_id=user.id)
     if ep is None:
         raise HTTPException(status_code=404, detail={"code": 404, "message": "episode not found"})
-    plan = await library_service.get_plan_by_id(ep.plan_id)
+    plan = await library_service.get_plan_by_id(ep.plan_id, user_id=user.id)
     if plan is None:
         raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
     await _assert_plan_active(plan)
@@ -309,30 +318,32 @@ async def regenerate_episode(episode_id: int, body: RegenerateIn | None = None) 
         artifacts.append_errata(ep.ext_id, reason)
     artifacts.backup_artifacts(ep.ext_id)
     await set_episode_status(ep.ext_id, "pending")
-    job_id = await pipeline.enqueue_episode(plan.ext_id, ep.seq, ep.ext_id)
+    job_id = await pipeline.enqueue_episode(plan.ext_id, ep.seq, ep.ext_id, user_id=user.id)
     return {"episode_id": episode_id, "job_id": job_id, "status": "pending"}
 
 
 @router.post("/episodes/{episode_id}/qc")
-async def qc_episode(episode_id: int, body: QcIn) -> dict:
+async def qc_episode(episode_id: int, body: QcIn, user: User = Depends(get_current_user)) -> dict:
     """人审标记(docs/07 §4):写 meta 的 human_qc;本期只做 API,不做 UI。"""
-    ep = await library_service.get_episode(episode_id)
+    ep = await library_service.get_episode(episode_id, user_id=user.id)
     if ep is None:
         raise HTTPException(status_code=404, detail={"code": 404, "message": "episode not found"})
     return artifacts.write_human_qc(ep.ext_id, body.passed, body.notes)
 
 
 @router.get("/episodes/{episode_id}/script", response_model=ScriptOut)
-async def get_script(episode_id: int) -> dict:
+async def get_script(episode_id: int, user: User = Depends(get_current_user)) -> dict:
     """取脚本文本(页面跟读;docs/02 §4),附带审稿结果与勘误历史。"""
+    ep = await library_service.get_episode(episode_id, user_id=user.id)
+    if ep is None:
+        raise HTTPException(status_code=404, detail={"code": 404, "message": "episode not found"})
     async with session() as s:
         script = await s.scalar(select(Script).where(Script.episode_id == episode_id))
         if script is None:
             raise HTTPException(status_code=404, detail={"code": 404, "message": "script not found"})
 
     # review/errata 走文件态(DB 不存审稿结果,docs/07 §3.1)
-    ep = await library_service.get_episode(episode_id)
-    file_script = scriptwriter.load_script(ep.ext_id) if ep else None
+    file_script = scriptwriter.load_script(ep.ext_id)
     try:
         references = json.loads(script.refs) if script.refs else []
         if not isinstance(references, list):
@@ -380,15 +391,18 @@ def _episode_event(ep: dict) -> dict:
     return event
 
 
-async def _plan_events(plan_id: int):
-    """SSE 生成进度推送(docs/04 §3):轮询 DB 状态变化 → 推事件,EventSource 断线重连由前端负责。"""
+async def _plan_events(plan_id: int, user_id: int):
+    """SSE 生成进度推送(docs/04 §3):轮询 DB 状态变化 → 推事件,EventSource 断线重连由前端负责。
+
+    轮询每次都带 user_id 重新校验归属:跨用户/不存在统一推 not_found,不泄露存在性。
+    """
     poll = 2.0  # 简单可靠,不额外依赖
     last_statuses: dict[int, str] = {}
     last_plan_key: tuple[str, int, int, bool] | None = None
     try:
         yield f"retry: 3000\n\n"
         while True:
-            detail = await library_service.get_plan(plan_id)
+            detail = await library_service.get_plan(plan_id, user_id=user_id)
             if detail is None:
                 yield f"event: plan_status\ndata: {json.dumps({'plan_id': plan_id, 'ext_id': '', 'status': 'not_found', 'ready': 0, 'total': 0, 'all_done': False, 'error': 'not_found'})}\n\n"
                 break
@@ -421,10 +435,10 @@ async def _plan_events(plan_id: int):
 
 
 @router.get("/plans/{plan_id}/events")
-async def plan_events(plan_id: int) -> StreamingResponse:
-    """SSE 进度主通道(docs/04 §3)。"""
+async def plan_events(plan_id: int, user: User = Depends(get_current_user)) -> StreamingResponse:
+    """SSE 进度主通道(docs/04 §3);EventSource 无法自定义头,鉴权走 ?token= 白名单。"""
     return StreamingResponse(
-        _plan_events(plan_id),
+        _plan_events(plan_id, user.id),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
     )

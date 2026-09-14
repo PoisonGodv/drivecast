@@ -91,10 +91,13 @@ def _question_view(q: Question, ep: Episode, plan: Plan, topic: Topic,
     }
 
 
-async def list_plans() -> list[dict]:
-    """计划列表,附带已就绪集数(docs/02 §4)。"""
+async def list_plans(user_id: int | None = None) -> list[dict]:
+    """计划列表,附带已就绪集数(docs/02 §4)。user_id=None 表示不过滤(内部/CLI)。"""
     async with session() as s:
-        result = await s.execute(select(Plan).order_by(Plan.id.desc()))
+        stmt = select(Plan)
+        if user_id is not None:
+            stmt = stmt.where(Plan.user_id == user_id)
+        result = await s.execute(stmt.order_by(Plan.id.desc()))
         rows = result.scalars().all()
         out = []
         for p in rows:
@@ -113,13 +116,19 @@ async def list_plans() -> list[dict]:
         return out
 
 
-async def get_plan(plan_id: int) -> dict | None:
-    """计划详情,含 episodes + 各集 status/duration/position/listen_status(docs/02 §4 示例)。"""
+async def get_plan(plan_id: int, user_id: int | None = None) -> dict | None:
+    """计划详情,含 episodes + 各集 status/duration/position/listen_status(docs/02 §4 示例)。
+
+    user_id 非 None 时按归属过滤(跨用户与不存在同返回 None,不泄露存在性)。
+    """
     from ..library import artifacts
     from ..scriptwriter import service as scriptwriter
 
     async with session() as s:
-        p = await s.scalar(select(Plan).where(Plan.id == plan_id))
+        stmt = select(Plan).where(Plan.id == plan_id)
+        if user_id is not None:
+            stmt = stmt.where(Plan.user_id == user_id)
+        p = await s.scalar(stmt)
         if p is None:
             return None
         result = await s.execute(
@@ -163,31 +172,44 @@ async def get_plan(plan_id: int) -> dict | None:
         }
 
 
-async def get_episode(episode_id: int) -> Episode | None:
-    """按整数 id 取 episode 行(用于 API 把 /api/episodes/{id} 映射到 ext_id)。"""
+async def get_episode(episode_id: int, user_id: int | None = None) -> Episode | None:
+    """按整数 id 取 episode 行(用于 API 把 /api/episodes/{id} 映射到 ext_id)。
+
+    episode 无冗余 user_id,user_id 非 None 时经 plan 关联校验归属。
+    """
     async with session() as s:
-        return await s.scalar(select(Episode).where(Episode.id == episode_id))
+        stmt = select(Episode).where(Episode.id == episode_id)
+        if user_id is not None:
+            stmt = stmt.join(Plan, Plan.id == Episode.plan_id).where(Plan.user_id == user_id)
+        return await s.scalar(stmt)
 
 
-async def get_plan_by_id(plan_id: int) -> Plan | None:
-    """按整数 id 取 plan 行。"""
+async def get_plan_by_id(plan_id: int, user_id: int | None = None) -> Plan | None:
+    """按整数 id 取 plan 行;user_id 非 None 时按归属过滤。"""
     async with session() as s:
-        return await s.scalar(select(Plan).where(Plan.id == plan_id))
+        stmt = select(Plan).where(Plan.id == plan_id)
+        if user_id is not None:
+            stmt = stmt.where(Plan.user_id == user_id)
+        return await s.scalar(stmt)
 
 
-def _review_stmt():
-    return (
+def _review_stmt(user_id: int | None = None):
+    stmt = (
         select(Question, Episode, Plan, Topic, Script)
         .join(Episode, Episode.id == Question.episode_id)
         .join(Plan, Plan.id == Episode.plan_id)
         .join(Topic, Topic.id == Plan.topic_id)
         .outerjoin(Script, Script.episode_id == Episode.id)  # 取复习卡片参考链接
     )
+    if user_id is not None:
+        stmt = stmt.where(Plan.user_id == user_id)
+    return stmt
 
 
 async def today_review(
     mastery: str | None = None,
     direction: str | None = None,
+    user_id: int | None = None,
 ) -> list[dict]:
     """今日待复习:未排期题优先,其后按到期时间和薄弱程度稳定排序。"""
     if mastery is not None and mastery not in _VALID_MASTERY:
@@ -205,7 +227,7 @@ async def today_review(
             else_=2,
         )
         result = await s.execute(
-            _review_stmt()
+            _review_stmt(user_id)
             .where(where)
             .order_by(
                 case((Question.next_review_at.is_(None), 0), else_=1),
@@ -222,6 +244,7 @@ async def today_review(
 async def list_questions(
     mastery: str | None = None,
     direction: str | None = None,
+    user_id: int | None = None,
 ) -> list[dict]:
     """题库筛选:按 mastery/direction 过滤,不限制到期时间。"""
     if mastery is not None and mastery not in _VALID_MASTERY:
@@ -232,17 +255,31 @@ async def list_questions(
             where = and_(where, Question.mastery == mastery)
         if direction:
             where = and_(where, Topic.direction == direction)
-        result = await s.execute(_review_stmt().where(where).order_by(Question.id.desc()))
+        result = await s.execute(_review_stmt(user_id).where(where).order_by(Question.id.desc()))
         return [_question_view(q, ep, plan, topic, script)
                 for q, ep, plan, topic, script in result]
 
 
-async def grade_question(question_id: int, mastery: str) -> dict:
-    """自评三态可直接切换;标不会即回退 unknown,并重算间隔与重听队列。"""
+async def grade_question(
+    question_id: int,
+    mastery: str,
+    user_id: int | None = None,
+) -> dict:
+    """自评三态可直接切换;标不会即回退 unknown,并重算间隔与重听队列。
+
+    user_id 非 None 时经 episode→plan 校验归属,跨用户与不存在同抛 LookupError(→404)。
+    """
     if mastery not in _VALID_MASTERY:
         raise ValueError(f"不支持的 mastery: {mastery}")
     async with session() as s:
-        q = await s.scalar(select(Question).where(Question.id == question_id))
+        stmt = select(Question).where(Question.id == question_id)
+        if user_id is not None:
+            stmt = (
+                stmt.join(Episode, Episode.id == Question.episode_id)
+                .join(Plan, Plan.id == Episode.plan_id)
+                .where(Plan.user_id == user_id)
+            )
+        q = await s.scalar(stmt)
         if q is None:
             raise LookupError("题目不存在")
 
@@ -255,7 +292,7 @@ async def grade_question(question_id: int, mastery: str) -> dict:
             reviewed_at + timedelta(days=_interval_days(mastery, q.review_count))
         )
         await s.flush()
-        replay = await _sync_replay_for_kp(s, q.kp_id, reviewed_at.date())
+        replay = await _sync_replay_for_kp(s, q.kp_id, reviewed_at.date(), user_id)
         await s.commit()
         return {
             "id": q.id,
@@ -267,9 +304,9 @@ async def grade_question(question_id: int, mastery: str) -> dict:
         }
 
 
-async def _weak_groups(s) -> list[dict]:
+async def _weak_groups(s, user_id: int | None = None) -> list[dict]:
     """Python 侧归并兼容空 kp_id;题量很小,换来迁移前后语义一致。"""
-    result = await s.execute(
+    stmt = (
         select(
             Question,
             Episode,
@@ -287,6 +324,9 @@ async def _weak_groups(s) -> list[dict]:
         .where(Question.mastery.in_(_WEAK_MASTERY))
         .order_by(Question.id)
     )
+    if user_id is not None:
+        stmt = stmt.where(Plan.user_id == user_id)
+    result = await s.execute(stmt)
     rows = list(result)
     groups: dict[str, dict] = {}
     for q, ep, plan, topic, audio, episode_weak_count in rows:
@@ -329,19 +369,25 @@ def _shortest_episode(group: dict) -> dict:
     )
 
 
-async def _sync_replay_for_kp(s, kp_id: str, today: date) -> dict | None:
-    """知识点仍有至少 2 道薄弱题才保留明日任务;恢复后撤销未来 pending。"""
-    groups = await _weak_groups(s)
+async def _sync_replay_for_kp(s, kp_id: str, today: date, user_id: int | None = None) -> dict | None:
+    """知识点仍有至少 2 道薄弱题才保留明日任务;恢复后撤销未来 pending。
+
+    user_id 非 None 时只增删该用户的重听任务(kp_id 是全局文本命名空间,
+    隔离完全依赖 user_id 列 + UNIQUE(user_id,kp_id,scheduled_for) 兜底)。
+    """
+    owner = user_id if user_id is not None else 1
+    groups = await _weak_groups(s, user_id)
     group = next((item for item in groups if item["kp_id"] == kp_id), None)
     tomorrow = today + timedelta(days=1)
+    replay_filters = [
+        ReviewReplay.kp_id == kp_id,
+        ReviewReplay.scheduled_for >= tomorrow.isoformat(),
+        ReviewReplay.status == "pending",
+    ]
+    if user_id is not None:
+        replay_filters.append(ReviewReplay.user_id == user_id)
     if group is None or len(group["question_ids"]) < 2:
-        await s.execute(
-            delete(ReviewReplay).where(
-                ReviewReplay.kp_id == kp_id,
-                ReviewReplay.scheduled_for >= tomorrow.isoformat(),
-                ReviewReplay.status == "pending",
-            )
-        )
+        await s.execute(delete(ReviewReplay).where(*replay_filters))
         return None
 
     episode = _shortest_episode(group)
@@ -349,10 +395,12 @@ async def _sync_replay_for_kp(s, kp_id: str, today: date) -> dict | None:
         select(ReviewReplay).where(
             ReviewReplay.kp_id == kp_id,
             ReviewReplay.scheduled_for == tomorrow.isoformat(),
+            ReviewReplay.user_id == owner,
         )
     )
     if replay is None:
         replay = ReviewReplay(
+            user_id=owner,
             kp_id=kp_id,
             episode_id=episode["episode_id"],
             scheduled_for=tomorrow.isoformat(),
@@ -372,18 +420,21 @@ async def _sync_replay_for_kp(s, kp_id: str, today: date) -> dict | None:
     }
 
 
-async def daily_plan() -> dict:
+async def daily_plan(user_id: int | None = None) -> dict:
     """今日学习视图:今天排期的新集 + 复习题三态统计(到期/逾期/未排期)。"""
     now = _now()
     today = now.date().isoformat()
     async with session() as s:
-        result = await s.execute(
+        stmt = (
             select(Episode, Plan, Topic)
             .join(Plan, Plan.id == Episode.plan_id)
             .join(Topic, Topic.id == Plan.topic_id)
             .where(Episode.scheduled_date == today, Plan.status == "active")
             .order_by(Plan.id, Episode.seq)
         )
+        if user_id is not None:
+            stmt = stmt.where(Plan.user_id == user_id)
+        result = await s.execute(stmt)
         new_episodes = [{
             "episode_id": ep.id,
             "plan_id": plan.id,
@@ -396,22 +447,27 @@ async def daily_plan() -> dict:
             "direction": topic.direction,
         } for ep, plan, topic in result]
 
+        async def _count(*extra) -> int:
+            # question 无冗余 user_id,统计一律经 episode→plan 关联过滤
+            stmt = (
+                select(func.count(Question.id))
+                .join(Episode, Episode.id == Question.episode_id)
+                .join(Plan, Plan.id == Episode.plan_id)
+            )
+            if user_id is not None:
+                stmt = stmt.where(Plan.user_id == user_id)
+            return (await s.scalar(stmt.where(*extra))) or 0
+
         now_text = _dt_text(now)
-        due_count = await s.scalar(
-            select(func.count(Question.id)).where(
-                Question.next_review_at.is_not(None),
-                Question.next_review_at <= now_text,
-            )
-        ) or 0
-        overdue_count = await s.scalar(
-            select(func.count(Question.id)).where(
-                Question.next_review_at.is_not(None),
-                Question.next_review_at < f"{today} 00:00:00",
-            )
-        ) or 0
-        new_count = await s.scalar(
-            select(func.count(Question.id)).where(Question.next_review_at.is_(None))
-        ) or 0
+        due_count = await _count(
+            Question.next_review_at.is_not(None),
+            Question.next_review_at <= now_text,
+        )
+        overdue_count = await _count(
+            Question.next_review_at.is_not(None),
+            Question.next_review_at < f"{today} 00:00:00",
+        )
+        new_count = await _count(Question.next_review_at.is_(None))
     return {
         "date": today,
         "new_episodes": new_episodes,
@@ -421,14 +477,17 @@ async def daily_plan() -> dict:
     }
 
 
-async def coverage() -> dict:
+async def coverage(user_id: int | None = None) -> dict:
     """题库全局覆盖视角:各方向已覆盖/未覆盖高频题统计(数据源是 episode.covers 并集)。"""
     async with session() as s:
-        result = await s.execute(
+        stmt = (
             select(Topic.direction, Episode.covers)
             .join(Plan, Plan.topic_id == Topic.id)
             .join(Episode, Episode.plan_id == Plan.id)
         )
+        if user_id is not None:
+            stmt = stmt.where(Plan.user_id == user_id)
+        result = await s.execute(stmt)
         covered_by_direction: dict[str, set[str]] = {}
         for direction, covers_raw in result:
             covered_by_direction.setdefault(direction, set()).update(
@@ -459,10 +518,10 @@ async def coverage() -> dict:
     return {"directions": directions}
 
 
-async def weak_points() -> list[dict]:
+async def weak_points(user_id: int | None = None) -> list[dict]:
     """薄弱知识点:unknown/fuzzy 合计至少 2 题,推荐最短有时长的相关集。"""
     async with session() as s:
-        groups = await _weak_groups(s)
+        groups = await _weak_groups(s, user_id)
         out = []
         for group in groups:
             count = len(group["question_ids"])
@@ -480,37 +539,39 @@ async def weak_points() -> list[dict]:
         return sorted(out, key=lambda item: (-item["weak_question_count"], item["kp_id"]))
 
 
-async def sync_replay_queue() -> list[dict]:
+async def sync_replay_queue(user_id: int | None = None) -> list[dict]:
     """同步次日排期，并优先返回今天仍到期的持久化任务。"""
     async with session() as s:
         today = _now().date()
-        groups = await _weak_groups(s)
+        groups = await _weak_groups(s, user_id)
         active = {
             group["kp_id"]
             for group in groups
             if len(group["question_ids"]) >= 2
         }
         for kp_id in active:
-            await _sync_replay_for_kp(s, kp_id, today)
+            await _sync_replay_for_kp(s, kp_id, today, user_id)
         tomorrow = (today + timedelta(days=1)).isoformat()
         stale = delete(ReviewReplay).where(
             ReviewReplay.scheduled_for == tomorrow,
             ReviewReplay.status == "pending",
         )
+        if user_id is not None:
+            stale = stale.where(ReviewReplay.user_id == user_id)
         if active:
             stale = stale.where(ReviewReplay.kp_id.not_in(active))
         await s.execute(stale)
         await s.commit()
     # 今天已有排期时不能被新建的明日任务遮住；为空才提供明日预览。
-    due = await replay_queue(today)
-    return due or await replay_queue(today + timedelta(days=1))
+    due = await replay_queue(today, user_id)
+    return due or await replay_queue(today + timedelta(days=1), user_id)
 
 
-async def replay_queue(for_date: date | None = None) -> list[dict]:
+async def replay_queue(for_date: date | None = None, user_id: int | None = None) -> list[dict]:
     """读取某日重听队列；默认今天，返回可直接播放的 episode 元数据。"""
     scheduled_for = (for_date or _now().date()).isoformat()
     async with session() as s:
-        result = await s.execute(
+        stmt = (
             select(ReviewReplay, Episode, Plan, Topic, Audio)
             .join(Episode, Episode.id == ReviewReplay.episode_id)
             .join(Plan, Plan.id == Episode.plan_id)
@@ -522,6 +583,9 @@ async def replay_queue(for_date: date | None = None) -> list[dict]:
             )
             .order_by(ReviewReplay.weak_question_count.desc(), Audio.duration_sec, Episode.id)
         )
+        if user_id is not None:
+            stmt = stmt.where(ReviewReplay.user_id == user_id)
+        result = await s.execute(stmt)
         return [{
             "id": replay.id,
             "scheduled_for": replay.scheduled_for,
@@ -538,43 +602,45 @@ async def replay_queue(for_date: date | None = None) -> list[dict]:
         } for replay, ep, plan, topic, audio in result]
 
 
-async def set_interview_date(interview_date: date | None) -> dict:
-    """持久化单用户面试日;传 null 可退出冲刺模式。"""
+async def set_interview_date(interview_date: date | None, user_id: int | None = None) -> dict:
+    """持久化面试日(按用户一行);传 null 可退出冲刺模式。user_id 缺省落 admin(=1)。"""
+    uid = user_id if user_id is not None else 1
     async with session() as s:
-        settings = await s.get(ReviewSettings, 1)
-        if settings is None:
-            settings = ReviewSettings(id=1)
-            s.add(settings)
-        settings.interview_date = interview_date.isoformat() if interview_date else None
-        settings.updated_at = _dt_text(_now())
+        row = await s.scalar(select(ReviewSettings).where(ReviewSettings.user_id == uid))
+        if row is None:
+            row = ReviewSettings(user_id=uid)
+            s.add(row)
+        row.interview_date = interview_date.isoformat() if interview_date else None
+        row.updated_at = _dt_text(_now())
         await s.commit()
         return {
-            "interview_date": settings.interview_date,
-            "updated_at": settings.updated_at,
+            "interview_date": row.interview_date,
+            "updated_at": row.updated_at,
         }
 
 
-async def get_interview_date() -> date | None:
+async def get_interview_date(user_id: int | None = None) -> date | None:
+    uid = user_id if user_id is not None else 1
     async with session() as s:
-        settings = await s.get(ReviewSettings, 1)
-        if settings is None or not settings.interview_date:
+        row = await s.scalar(select(ReviewSettings).where(ReviewSettings.user_id == uid))
+        if row is None or not row.interview_date:
             return None
-        return date.fromisoformat(settings.interview_date)
+        return date.fromisoformat(row.interview_date)
 
 
 def _sprint_days(interview_date: date) -> list[date]:
     return [interview_date - timedelta(days=offset) for offset in (3, 2, 1)]
 
 
-async def sprint_list() -> dict:
+async def sprint_list(user_id: int | None = None) -> dict:
     """考前三天冲刺清单:方向分组,组内按单集薄弱题数倒序。"""
-    interview_date = await get_interview_date()
+    interview_date = await get_interview_date(user_id)
     if interview_date is None:
         raise ValueError("请先设置面试日")
 
     sprint_days = _sprint_days(interview_date)
     async with session() as s:
-        result = await s.execute(
+        stmt = (
             select(
                 Topic.direction,
                 Episode.id,
@@ -599,6 +665,9 @@ async def sprint_list() -> dict:
             )
             .order_by(Topic.direction, func.count(Question.id).desc(), Episode.id)
         )
+        if user_id is not None:
+            stmt = stmt.where(Plan.user_id == user_id)
+        result = await s.execute(stmt)
         rows = list(result)
         grouped: dict[str, list[dict]] = {}
         for direction, ep_id, ep_title, plan_id, plan_title, duration, count in rows:

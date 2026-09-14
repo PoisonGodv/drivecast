@@ -28,20 +28,30 @@ Python 3.14 · FastAPI · SQLite(WAL) + SQLAlchemy 2.0 · openai-python（OpenAI
 
 ## 快速开始
 
-> 当前进度：M0-M6 ✅（CLI / SQLite / Web / 复习闭环 / 成品音频打磨均已通过本地验收）。数据库升级请先运行 `.venv/bin/alembic upgrade head`（当前 head：`0004`）；维护或只读验收时可用 `WORKER_ENABLED=false python run.py` 禁止消费生成队列。细节见 [docs/05-roadmap.md](docs/05-roadmap.md)。
+> Web 已启用多用户登录，计划、音频、题库和任务按用户隔离；没有公开注册 API。升级前停服务并备份 `data/` 与 `.env`，先迁移（当前 head：`0006`），再设置用户密码，最后启动。维护时 `WORKER_ENABLED=false` 仅禁止消费生成队列，并非只读或跳过认证。完整步骤见 [部署指南](docs/06-deploy.md)。
 
 ```bash
 # 环境（一次性）
 brew install ffmpeg
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python scripts/smoke.py       # 依赖+LLM+edge-tts+ffmpeg 一把验
-cp .env.example .env          # 填 LLM_BASE_URL / LLM_API_KEY / LLM_MODEL
+# 仅新安装复制模板；已有 .env 必须保留，不要覆盖 LLM/TTS 等配置
+if [ ! -e .env ]; then cp .env.example .env; fi
+chmod 600 .env
+# 编辑 .env 填 LLM_BASE_URL / LLM_API_KEY / LLM_MODEL
+# 已有配置仅补缺失的 AUTH_SECRET，保持现有密钥不变；生成随机值：
+python -c 'import secrets; print(secrets.token_urlsafe(48))'
+# 将输出私密保存为 .env 的 AUTH_SECRET=...，不要提交或贴到日志
 
-# 启动 Web（浏览器打开 http://127.0.0.1:8080）
+.venv/bin/alembic upgrade head            # 失败必须停止，不能先启动/建普通用户
+python -m drivecast reset-password admin # 交互输入并确认，解锁历史数据属主 admin
+python -m drivecast create-user alice    # 可选：为其他使用者创建独立账号
+python scripts/smoke.py                  # 真实调用外部依赖，可能消耗额度
+
+# 启动 Web（浏览器打开 http://127.0.0.1:8080 后登录）
 python run.py
-# 只读验收/维护：WORKER_ENABLED=false python run.py（不消费 script/tts/audio_upgrade）
-# 手机/车机同一局域网访问:.env 加 WEB_HOST=0.0.0.0,然后 http://<本机IP>:8080
+# 暂停生成队列：WORKER_ENABLED=false python run.py（API 写操作仍开放）
+# 手机/车机访问：按部署指南配置 HTTPS 代理或安全隧道，勿在明文公网传密码/token
 # 创建计划后 worker 后台逐集生成,边生成边听;锁屏可播放/±15s/切集(Media Session)
 
 # CLI（与 Web 共用同一 DB 和 job 队列）
@@ -51,8 +61,11 @@ python -m drivecast generate <plan_id>      # 整计划批量
 python -m drivecast list <plan_id>
 python -m drivecast dbsync                  # 存量文件产物导入 SQLite
 .venv/bin/alembic upgrade head              # DB 迁移（新环境一把建表）
-.venv/bin/python -m unittest discover -s tests   # 跑全部测试
+.venv/bin/python -m unittest discover -s tests   # 标准库测试 runner
+.venv/bin/python -m pytest -q                    # 若已安装 pytest，可运行完整 Python 测试集
 ```
+
+**认证边界**：改密码不会撤销旧 JWT；默认有效期 7 天，紧急全量失效需轮换 `AUTH_SECRET` 并重启。音频/SSE URL 携带的仍是登录 JWT，不是短期资源 token；需要 TLS，并对代理/CDN/WAF 的 URL 日志独立脱敏。只信任明确代理 IP 的转发头，禁止 `FORWARDED_ALLOW_IPS=*`。无 TTY 建号时由秘密管理器向 CLI 子进程注入 `DRIVECAST_USER_PASSWORD`，不要把密码写进命令参数、仓库或日志。
 
 ## 文档导航
 

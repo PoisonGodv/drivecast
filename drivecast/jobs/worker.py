@@ -231,14 +231,15 @@ async def _run_plan_job(job: Job) -> None:
     plan_rec = await planner.create_plan(
         payload["topic"], direction=payload["direction"],
         episode_count=payload.get("episode_count"), target_minutes=payload.get("target_minutes"),
-        plan_id=plan_ext_id,
+        plan_id=plan_ext_id, user_id=job.user_id,
     )
     if not await _plan_alive(plan_ext_id):
         settings.plan_path(plan_ext_id).unlink(missing_ok=True)
         await _finish(job.id, "cancelled", "plan deleted during generation")
         return
     from .pipeline import enqueue_plan_all
-    await enqueue_plan_all(plan_rec)
+    # 链式入队继承父 job 归属:各集 script job 的 user_id 与计划属主一致
+    await enqueue_plan_all(plan_rec, user_id=job.user_id)
     await _finish(job.id, "done")
 
 
@@ -252,7 +253,7 @@ async def _run_script_job(job: Job) -> None:
         print(f"[worker] job#{job.id} 所属计划非存活,停止后续入队")
         await _finish(job.id, "cancelled", "plan not active")
         return
-    await enqueue("tts", ep.episode_id, {"plan_id": plan.plan_id, "seq": ep.seq})
+    await enqueue("tts", ep.episode_id, {"plan_id": plan.plan_id, "seq": ep.seq}, user_id=job.user_id)
     await _finish(job.id, "done")
 
 

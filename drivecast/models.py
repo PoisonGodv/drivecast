@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, Text, UniqueConstraint, text
+from sqlalchemy import ForeignKey, Index, Integer, Text, UniqueConstraint, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -21,9 +21,22 @@ def _now() -> Mapped[str]:
     return mapped_column(Text, nullable=False, server_default=text("(datetime('now'))"))
 
 
+class User(Base):
+    """登录用户(多租户根)。密码哈希格式见 drivecast/auth.py;无注册接口,仅 CLI 建户。"""
+
+    __tablename__ = "user"
+    id: Mapped[int] = _id()
+    username: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = _now()
+
+
 class Topic(Base):
     __tablename__ = "topic"
+    __table_args__ = (Index("idx_topic_user", "user_id"),)
     id: Mapped[int] = _id()
+    # user_id ORM 默认 1=迁移约定的 admin(0006 第一个 INSERT 保证);测试/CLI 种子免传
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     direction: Mapped[str] = mapped_column(Text, nullable=False)
     depth: Mapped[str] = mapped_column(Text, nullable=False, default="senior")
@@ -32,7 +45,10 @@ class Topic(Base):
 
 class Plan(Base):
     __tablename__ = "plan"
+    __table_args__ = (Index("idx_plan_user", "user_id"),)
     id: Mapped[int] = _id()
+    # user_id ORM 默认 1=迁移约定的 admin;测试/CLI 种子免传
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     ext_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)  # plan_20260820_01
     topic_id: Mapped[int] = mapped_column(Integer, nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
@@ -108,14 +124,22 @@ class Question(Base):
 
 
 class ReviewReplay(Base):
-    """薄弱知识点触发的次日重听队列;同一天同一知识点只保留一条。"""
+    """薄弱知识点触发的次日重听队列;同一用户同一天同一知识点只保留一条。
+
+    kp_id 形如 'knowledge:MySQL 索引' 是全局文本命名空间,唯一约束必须带 user_id,
+    否则两用户同主题生成会互相顶掉对方的重听任务。
+    """
 
     __tablename__ = "review_replay"
     __table_args__ = (
-        UniqueConstraint("kp_id", "scheduled_for"),
+        UniqueConstraint("user_id", "kp_id", "scheduled_for"),
         Index("idx_review_replay_due", "scheduled_for", "status"),
     )
     id: Mapped[int] = _id()
+    # server_default 1:兼容迁移前 create_all 建出的表上的裸 SQL 插入(scripts/存量测试)
+    user_id: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default=text("1")
+    )
     kp_id: Mapped[str] = mapped_column(Text, nullable=False)
     episode_id: Mapped[int] = mapped_column(
         ForeignKey("episode.id", ondelete="CASCADE"), nullable=False
@@ -129,11 +153,11 @@ class ReviewReplay(Base):
 
 
 class ReviewSettings(Base):
-    """单用户复习设置;固定 id=1,避免把全局状态塞进 JSON。"""
+    """复习设置(按用户一行;旧版 CHECK(id=1) 单例已由 0006 重建为 user_id 唯一)。"""
 
     __tablename__ = "review_settings"
-    __table_args__ = (CheckConstraint("id = 1", name="ck_review_settings_singleton"),)
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    id: Mapped[int] = _id()
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True, default=1)  # 默认 1=admin
     interview_date: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[str] = _now()
 
@@ -142,6 +166,9 @@ class Job(Base):
     __tablename__ = "job"
     __table_args__ = (Index("idx_job_status", "status", "id"),)
     id: Mapped[int] = _id()
+    # user_id 用途:GET /api/jobs/{id} 按用户 404;worker 链式入队从父 job 继承。
+    # 按主键查、不建索引。ORM 默认 1=admin(迁移约定),测试/CLI 种子免传。
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     kind: Mapped[str] = mapped_column(Text, nullable=False)      # script/tts
     ref_id: Mapped[str] = mapped_column(Text, nullable=False)    # episode ext_id
     status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")

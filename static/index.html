@@ -5,13 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#0f1115">
   <title>DriveCast</title>
-  <link rel="stylesheet" href="/static/css/base.css?v=20260911b">
-  <link rel="stylesheet" href="/static/css/components.css?v=20260911b">
-  <link rel="stylesheet" href="/static/css/review.css?v=20260911b">
+  <link rel="stylesheet" href="/static/css/base.css?v=20260914b">
+  <link rel="stylesheet" href="/static/css/components.css?v=20260914b">
+  <link rel="stylesheet" href="/static/css/review.css?v=20260914b">
 </head>
 <body>
   <div id="app">
-    <header class="app-header">
+    <header v-if="authed" class="app-header">
       <div class="container">
         <a href="#/" class="brand">DriveCast</a>
         <nav class="nav-tabs">
@@ -20,10 +20,61 @@
           <a href="#/review" class="nav-tab" :class="{ active: route === 'review' }">复习</a>
           <a v-if="hasActivePlayer" :href="'#/play/' + player.episodeId + '?plan=' + player.planId" class="nav-tab" :class="{ active: route === 'play' }">播放</a>
         </nav>
+        <div class="nav-user">
+          <span class="nav-username" :title="user?.username">{{ user?.username }}</span>
+          <button class="nav-logout" @click="logout" title="退出登录">退出</button>
+        </div>
       </div>
     </header>
 
     <main class="container">
+      <!-- 启动登录态校验 -->
+      <div v-if="authReady" class="loading">正在校验登录状态…</div>
+
+      <!-- 登录 -->
+      <section v-else-if="route === 'login'" key="login" class="fade-in auth-page">
+        <div class="card auth-card">
+          <div class="auth-eyebrow">DriveCast</div>
+          <h1 class="page-title auth-title">登录</h1>
+          <p class="auth-sub">输入用户名与密码，继续你的通勤学习</p>
+          <form @submit.prevent="submitLogin">
+            <div class="form-group">
+              <label class="form-label" for="login-username">用户名</label>
+              <input
+                id="login-username"
+                v-model="loginForm.username"
+                type="text"
+                class="form-input"
+                autocomplete="username"
+                autocapitalize="none"
+                autocorrect="off"
+                spellcheck="false"
+                placeholder="用户名"
+              >
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="login-password">密码</label>
+              <input
+                id="login-password"
+                v-model="loginForm.password"
+                type="password"
+                class="form-input"
+                autocomplete="current-password"
+                placeholder="密码"
+              >
+            </div>
+            <div v-if="loginError" class="error" role="alert">{{ loginError }}</div>
+            <button
+              type="submit"
+              :disabled="loggingIn"
+              class="btn btn-primary btn-lg btn-block"
+            >
+              {{ loggingIn ? '登录中…' : '登录' }}
+            </button>
+          </form>
+        </div>
+      </section>
+
       <!-- 首页 -->
       <section v-if="route === 'home'" key="home" class="fade-in">
         <h1 class="page-title">今日学习</h1>
@@ -826,6 +877,6 @@
     </div>
   </div>
 
-  <script type="module" src="/static/js/main.js?v=20260911c"></script>
+  <script type="module" src="/static/js/main.js?v=20260914b"></script>
 </body>
 </html>

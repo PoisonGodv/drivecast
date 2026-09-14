@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from fastapi.testclient import TestClient
+from auth_test_support import authenticated_admin_client
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -29,7 +29,7 @@ class WebContractsTest(unittest.TestCase):
         self.audio_path.parent.mkdir(parents=True, exist_ok=True)
         self.audio_path.write_bytes(b"ID3" + b"audio-bytes" * 32)
         asyncio.run(self._seed())
-        self.client = TestClient(app)
+        self.client = authenticated_admin_client(self)
 
     def tearDown(self) -> None:
         asyncio.run(db.close_db())
@@ -179,7 +179,7 @@ class PlanLifecycleContractsTest(unittest.TestCase):
         self.audio_path.parent.mkdir(parents=True, exist_ok=True)
         self.audio_path.write_bytes(b"ID3" + b"audio-bytes" * 8)
         asyncio.run(self._seed())
-        self.client = TestClient(app)
+        self.client = authenticated_admin_client(self)
 
     def tearDown(self) -> None:
         asyncio.run(db.close_db())
@@ -346,7 +346,7 @@ class PlanAsyncCreateTest(unittest.TestCase):
         settings.data_dir = Path(self.tmp.name)
         asyncio.run(db.init_db())
         asyncio.run(self._seed())
-        self.client = TestClient(app)
+        self.client = authenticated_admin_client(self)
 
     def tearDown(self) -> None:
         asyncio.run(db.close_db())

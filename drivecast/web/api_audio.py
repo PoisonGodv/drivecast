@@ -5,14 +5,15 @@ import json
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, select, text
 
+from ..auth import get_current_user
 from ..config import settings
 from ..db import session
-from ..models import Episode
+from ..models import Episode, Plan, User
 
 router = APIRouter(prefix="/api", tags=["audio"])
 
@@ -278,9 +279,17 @@ async def _read_audio_row(s, episode_id: int):
     return await s.run_sync(read)
 
 
-async def _audio_record(episode_id: int) -> tuple[Episode, AudioRecord, Path]:
+async def _owned_episode(s, episode_id: int, user_id: int | None) -> Episode | None:
+    """取 episode 行;user_id 非 None 时经 plan 关联校验归属(跨用户视同不存在)。"""
+    stmt = select(Episode).where(Episode.id == episode_id)
+    if user_id is not None:
+        stmt = stmt.join(Plan, Plan.id == Episode.plan_id).where(Plan.user_id == user_id)
+    return await s.scalar(stmt)
+
+
+async def _audio_record(episode_id: int, user_id: int | None = None) -> tuple[Episode, AudioRecord, Path]:
     async with session() as s:
-        episode = await s.get(Episode, episode_id)
+        episode = await _owned_episode(s, episode_id, user_id)
         audio_row = await _read_audio_row(s, episode_id)
     if episode is None:
         raise HTTPException(status_code=404, detail={"code": 404, "message": "episode not found"})
@@ -309,9 +318,9 @@ async def _audio_record(episode_id: int) -> tuple[Episode, AudioRecord, Path]:
 
 
 @router.get("/episodes/{episode_id}/audio/meta")
-async def get_audio_meta(episode_id: int) -> dict[str, Any]:
+async def get_audio_meta(episode_id: int, user: User = Depends(get_current_user)) -> dict[str, Any]:
     """播放页所需章节、质检和时长校准信息;兼容仅含 M1 字段的旧 meta。"""
-    episode, audio, path = await _audio_record(episode_id)
+    episode, audio, path = await _audio_record(episode_id, user.id)
     meta = _load_meta(episode.ext_id, audio.meta)
     duration = _number(meta.get("duration_sec")) or float(audio.duration_sec or 0)
     size_bytes = path.stat().st_size
@@ -328,17 +337,20 @@ async def get_audio_meta(episode_id: int) -> dict[str, Any]:
 
 
 @router.api_route("/episodes/{episode_id}/audio/download", methods=["GET", "HEAD"])
-async def download_audio(episode_id: int) -> FileResponse:
-    """显式 MP3 下载出口;与流式播放分开设置 attachment。"""
-    episode, _, path = await _audio_record(episode_id)
+async def download_audio(episode_id: int, user: User = Depends(get_current_user)) -> FileResponse:
+    """显式 MP3 下载出口;与流式播放分开设置 attachment。鉴权支持 ?token=(<a href> 无请求头)。"""
+    episode, _, path = await _audio_record(episode_id, user.id)
     filename = f"{episode.ext_id}.mp3"
     return FileResponse(path=path, media_type="audio/mpeg", filename=filename, stat_result=path.stat())
 
 
 @router.api_route("/episodes/{episode_id}/audio", methods=["GET", "HEAD"])
-async def stream_audio(episode_id: int) -> FileResponse:
-    """音频流式播放,浏览器自动发 Range;FileResponse 在当前 starlette 版本原生支持 206(docs/02 §4)。"""
-    _, _, path = await _audio_record(episode_id)
+async def stream_audio(episode_id: int, user: User = Depends(get_current_user)) -> FileResponse:
+    """音频流式播放,浏览器自动发 Range;FileResponse 在当前 starlette 版本原生支持 206(docs/02 §4)。
+
+    <audio src> 无法自定义请求头,鉴权支持 ?token=(见 drivecast/auth.py 白名单)。
+    """
+    _, _, path = await _audio_record(episode_id, user.id)
 
     # Starlette FileResponse 已处理 Range/206/Content-Range;验证见验证清单 curl。
     return FileResponse(
@@ -351,10 +363,12 @@ async def stream_audio(episode_id: int) -> FileResponse:
 
 
 @router.post("/episodes/{episode_id}/progress", response_model=ProgressOut)
-async def report_progress(episode_id: int, body: ProgressUpdate) -> dict:
+async def report_progress(
+    episode_id: int, body: ProgressUpdate, user: User = Depends(get_current_user)
+) -> dict:
     """上报播放 position;听完置 listen_status=done(docs/02 §4 / docs/04 §2.3)。"""
     async with session() as s:
-        ep = await s.get(Episode, episode_id)
+        ep = await _owned_episode(s, episode_id, user.id)
         if ep is None:
             raise HTTPException(status_code=404, detail={"code": 404, "message": "episode not found"})
         audio_row = (

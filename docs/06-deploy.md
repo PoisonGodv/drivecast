@@ -11,7 +11,7 @@
 - **外部网络依赖**（出站）：
   1. LLM API（OpenAI 兼容协议，地址由 `.env` 的 `LLM_BASE_URL` 决定）
   2. 微软 edge-tts 公共服务（`speech.platform.bing.com`，WSS 443）——音频合成走它
-- **无鉴权**：应用本身没有登录/认证（本地单用户设计）。对外暴露**必须**走 §6 的防护措施。
+- **多用户认证**：Web 使用密码登录 + JWT Bearer，业务资源按用户隔离；没有公开注册 API，用户由本机 CLI 管理。对外仍必须启用 §6 的 TLS、代理信任与日志脱敏。
 
 ## 2. 前置要求
 
@@ -66,17 +66,19 @@ python3 -m venv .venv
 ### 步骤 4 · 配置 .env
 
 ```bash
-cp .env.example .env
+if [ ! -e .env ]; then cp .env.example .env; fi  # 已有配置绝不能覆盖
 chmod 600 .env
-# 编辑 .env，必填三项：
+# 编辑 .env；已有 LLM/TTS 等配置保留，仅补缺失项：
 #   LLM_BASE_URL=   # 如 https://api.deepseek.com/v1
 #   LLM_API_KEY=    # 真实 key，勿提交到 git
 #   LLM_MODEL=      # 如 deepseek-chat
-# 服务器对外提供访问时必须加：
-#   WEB_HOST=0.0.0.0
+#   AUTH_SECRET=    # 独立随机密钥（至少 32 字节随机源），不要复用 API key
+.venv/bin/python -c 'import secrets; print(secrets.token_urlsafe(48))'
+# 将输出私密保存到 .env 的 AUTH_SECRET；已有 AUTH_SECRET 保持不变
+# 推荐保持 WEB_HOST=127.0.0.1，由 §6 的 HTTPS 代理对外
 ```
 
-其余项（音色/响度/时长）保持默认即可。**验收**：`grep -c '^LLM_' .env` ≥ 3。
+其余项（音色/响度/时长）保持现有值或默认值。不要打印 `.env` 来验收；确认 LLM 配置和 `AUTH_SECRET` 均已填写。空签名密钥仅使用进程随机值，重启会令 token 失效，不适合部署。
 
 ### 步骤 5 · 建库（alembic 迁移）
 
@@ -84,7 +86,18 @@ chmod 600 .env
 .venv/bin/alembic upgrade head
 ```
 
-**验收**：`sqlite3 data/drivecast.db "SELECT version_num FROM alembic_version"` 输出 `0004`。
+**验收**：`sqlite3 data/drivecast.db "SELECT version_num FROM alembic_version"` 输出 `0006`。
+
+升级已有库前必须停 Web/CLI worker 并备份 SQLite（含 WAL 状态，见 §7）和文件。迁移保留历史数据属主 `admin`（ID 1），初始密码为不可登录的锁定占位。新库同样预留该属主，不能用第一个普通用户接管历史数据。若遇到 schema 过旧、部分迁移或 admin/ID 1 冲突，**停止上线**，保留失败库和备份，排查冲突后重试；不要删除 user 表、强行 stamp head、手改归属或跳过校验。
+
+迁移成功后再交互设置密码（不回显、需确认），不要把明文密码放到命令参数/历史里：
+
+```bash
+.venv/bin/python -m drivecast reset-password admin
+.venv/bin/python -m drivecast create-user alice  # 可选普通用户
+```
+
+无 TTY 自动部署使用秘密管理器注入 `DRIVECAST_USER_PASSWORD`，仅传给对应 CLI 子进程，完成后清除；不要写入脚本、`.env`、CI 日志或使用 `set -x`。CLI 虽支持 `--password`，但生产不推荐（进程列表和 shell 历史可泄露）。
 
 ### 步骤 6 · 冒烟（依赖 + LLM + edge-tts + ffmpeg 一把验）
 
@@ -103,7 +116,7 @@ chmod 600 .env
 .venv/bin/python -m unittest discover -s tests
 ```
 
-**验收**：`OK`（当前 19 个用例）。
+**验收**：`OK`。测试数据库/文件使用临时目录，业务 API 测试显式配置真实认证 fixture，不依赖 pytest autouse 桩。已安装 pytest 时也可运行 `.venv/bin/python -m pytest -q`。
 
 ### 步骤 8 · 前台试跑
 
@@ -112,11 +125,11 @@ chmod 600 .env
 # 另开终端验收：
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080/        # 200
 curl -s -o /dev/null -w "%{http_code}\n" -H "Range: bytes=0-1023" \
-  http://127.0.0.1:8080/api/episodes/1/audio                          # 404 也算过：新库无集，只验路由活着
-curl -s http://127.0.0.1:8080/api/review/today                        # 返回 JSON（空数组也算过）
+  http://127.0.0.1:8080/api/episodes/1/audio                          # 401：未认证不可读音频
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080/api/review/today  # 401
 ```
 
-Ctrl+C 停掉，进入步骤 9 做常驻。
+Ctrl+C 停掉，进入 §4 做常驻。
 
 ## 4. systemd 常驻
 
@@ -135,7 +148,7 @@ WorkingDirectory=/opt/drivecast
 ExecStart=/opt/drivecast/.venv/bin/python run.py
 Restart=always
 RestartSec=5
-# 维护窗口只读运行时，可临时加：Environment=WORKER_ENABLED=false
+# 维护窗口暂停生成队列，可临时加：Environment=WORKER_ENABLED=false（不是只读）
 
 [Install]
 WantedBy=multi-user.target
@@ -151,38 +164,42 @@ sudo systemctl status drivecast --no-pager     # Active: active (running)
 
 ## 5. 端到端验收（真实生成一集）
 
-浏览器打开 `http://<服务器IP>:8080/`（先确认 §6 防护就位）：
+浏览器打开 §6 配置的 HTTPS 站点（或安全隧道的本机地址）：
 
-1. 新建计划（选方向、6 集）→ 大纲确认 → 进入计划详情页。
+1. 用刚设置的账号登录，再新建计划（选方向、6 集）→ 大纲确认 → 进入计划详情页。
 2. 观察 SSE：约 2–5 分钟第一集变 ready（一次 LLM 脚本 + 若干 edge-tts chunk + ffmpeg 后处理）。
 3. 播放第一集，声音正常、可拖进度条、可下载 MP3。
 4. CLI 侧验证：`.venv/bin/python -m drivecast list <plan_id>` 状态一致。
 
 > 不想花 LLM tokens 验收的话，可跳过本节，只做 §3 步骤 8 + §4 的健康检查。
 
-## 6. 安全（必读：应用无鉴权）
+## 6. 安全（登录不能替代传输与部署防护）
 
-`WEB_HOST=0.0.0.0` 后**同一网络任何人都能访问全部功能**（创建计划消耗你的 LLM 配额、听全部音频）。三选一：
+- 公网必须 HTTPS；推荐后端 `.env` 保持 `WEB_HOST=127.0.0.1`，只由 TLS 反向代理对外。也可仅用 SSH/Tailscale/WireGuard 隧道访问，不开放后端端口。
+- JWT 默认有效期 7 天（`AUTH_TOKEN_EXPIRE_DAYS`）；**重置密码不会撤销已签发 token**，旧 token 到期前仍可能有效。客户端退出只清本地会话。怀疑泄露时需要轮换 `AUTH_SECRET` 并重启以使所有用户的旧 token 失效，再重新登录。
+- 音频流/下载和 SSE 因浏览器接口限制会在白名单 URL 中携带 `?token=`。当前是同一登录 JWT，**不是短期、单资源授权 token**。Uvicorn 日志有应用内脱敏，但 nginx/CDN/WAF/负载均衡及监控采集仍需独立去除 query/token；不得缓存、转发或分享带 token 的链接。
+- 登录限流按 Uvicorn 解析后的 `request.client.host` 工作，业务不自行信任任意 `X-Forwarded-For`。只有明确的代理源 IP 可以解析转发头；不得配置 `FORWARDED_ALLOW_IPS=*`。单机 nginx 可在 systemd 中显式设置 `Environment=FORWARDED_ALLOW_IPS=127.0.0.1`（如果代理实际用 IPv6/容器地址，改为明确地址）。后端不允许被客户端绕过代理直连。
+- 若不使用代理，应关闭代理头解析（例如 `.venv/bin/python -m uvicorn drivecast.web.main:app --host 127.0.0.1 --port 8080 --no-proxy-headers`；lifespan 仍内嵌 worker）。不要启用多个 worker 进程。
 
-1. **防火墙白名单**（最简单）：只放行你的常用 IP / 内网段。
-   ```bash
-   sudo ufw allow from <你的IP> to any port 8080 proto tcp
-   sudo ufw deny 8080
-   ```
-2. **反向代理 + Basic Auth**（nginx 片段）：
-   ```nginx
-   location / {
-       auth_basic "drivecast";
-       auth_basic_user_file /etc/nginx/.htpasswd;   # htpasswd -c 生成
-       proxy_pass http://127.0.0.1:8080;
-       proxy_set_header Host $host;
-       proxy_buffering off;        # SSE 必须关缓冲
-   }
-   ```
-   此时 `.env` 保持 `WEB_HOST=127.0.0.1`，由 nginx 对外。
-3. **仅隧道访问**：保持 `127.0.0.1` 绑定，用 `ssh -L 8080:127.0.0.1:8080 user@server` 或 Tailscale/WireGuard 进。
+nginx 片段（放在已经配置证书的 HTTPS server 中；另设 HTTP→HTTPS 重定向）：
 
-> 注意：手机锁屏 Media Session、SSE 长连接在反向代理后都要 `proxy_buffering off`，方案 2 已含。
+```nginx
+# http {} 范围定义；只记 $uri，不记含 query 的 $request/$request_uri
+log_format drivecast_safe '$remote_addr $request_method $uri $status';
+
+# HTTPS server {} 范围
+access_log /var/log/nginx/drivecast.access.log drivecast_safe;
+location / {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr; # 单跳代理覆盖用户传入值
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;  # SSE 必须关缓冲
+    proxy_read_timeout 300s;
+}
+```
+
+多级代理必须逐跳建立信任并过滤客户端注入的头，不能直接照搬单跳示例。错误日志、追踪平台也可能记录完整请求 URL，需额外限制访问和脱敏；仅修改 access_log 不代表所有日志安全。可额外加防火墙白名单/Basic Auth，但不能替代应用认证或 TLS。
 
 ## 7. 数据与备份
 
@@ -198,21 +215,23 @@ sudo systemctl status drivecast --no-pager     # Active: active (running)
 ## 8. 升级 / 回滚
 
 ```bash
+set -e  # 任一步失败立即停止，不能继续启动
 cd /opt/drivecast
 sudo systemctl stop drivecast
+# 先按 §7 备份数据库、文件和 .env，再继续
 git fetch && git checkout <目标commit或tag>
 .venv/bin/pip install -r requirements.lock
 .venv/bin/alembic upgrade head
 sudo systemctl start drivecast
 ```
 
-回滚：`git checkout <旧commit>` 后同样步骤；alembic 迁移未写 downgrade，回滚 schema 不支持，靠备份 `.db` 恢复。
+回滚前停止所有进程，恢复与目标版本匹配的数据库/文件备份；不要直接让旧版无认证代码读取新多租户数据。0006 不提供自动安全降级，不能仅 checkout 旧代码后对外启动。升级迁移失败时不得执行 start；每一步成功后才继续。
 
 ## 9. 运维速查
 
 | 场景 | 操作 |
 |---|---|
-| 只读维护（不消费生成队列） | `WORKER_ENABLED=false` 启动，或 systemd unit 临时加该 Environment |
+| 暂停生成队列（不禁止 API 写入） | `WORKER_ENABLED=false` 启动，或 systemd unit 临时加该 Environment |
 | 看日志 | `journalctl -u drivecast -f` |
 | 某集生成失败 | Web 计划详情页该行"重试"，或 `POST /api/episodes/{id}/generate` |
 | 整夜批量生成 | 建计划后放任即可，job 表持久化，进程重启自动续跑（running→pending 重入队） |
@@ -227,6 +246,6 @@ sudo systemctl start drivecast
 | 启动即退出，`Address already in use` | 8080 被占：改 `.env` 的 `WEB_PORT` 或释放端口 |
 | 冒烟 LLM 步骤超时 | `LLM_TIMEOUT` 调大（长脚本生成实测 100-500s，建议 ≥600）；流式空闲看门狗 `LLM_IDLE_TIMEOUT`（默认 120s）判定连接挂死；或换厂商端点 |
 | 冒烟 edge-tts 步骤失败 | 服务器到微软 TTS 出站不通（常见于国内机房）：配 HTTPS 代理或换出口 |
-| SSE 无推送但页面正常 | 反向代理没关 buffering（§6 方案 2 已含 `proxy_buffering off`） |
+| SSE 无推送但页面正常 | 反向代理没关 buffering（§6 已含 `proxy_buffering off`） |
 | `sqlite3.OperationalError: database is locked` | 多进程共写同一 DB；确认只有一个 drivecast 实例在跑 |
 | 音频生成卡 running 不动 | 重启服务（断点续跑幂等，不会重复合成）；仍失败看 journalctl 对应 job 报错 |

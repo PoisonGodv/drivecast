@@ -6,7 +6,9 @@
  */
 
 import { reactive } from '../vendor/petite-vue.js'
-import { api } from './api.js?v=20260911b'
+import { getSession, isCurrentSession, onSessionChange } from './session.js'
+import { store } from './store.js?v=20260914b'
+import { api } from './api.js?v=20260914b'
 
 const SPRINT_STORAGE_PREFIX = 'drivecast.review.sprint.completed.'
 
@@ -226,17 +228,22 @@ export function useReview() {
     },
 
     async load() {
+      const session = getSession()
       this.loading = true
       this.error = ''
       this.notice = ''
       try {
         const data = await api.getReviewToday()
+        if (!isCurrentSession(session)) return
         this.cards = sortDueCards(listFrom(data, ['items', 'questions']))
         await this.hydratePlanIds(this.cards)
+        if (!isCurrentSession(session)) return
         this.flipped = {}
       } catch (err) {
+        if (!isCurrentSession(session)) return
         this.error = err.message
       } finally {
+        if (!isCurrentSession(session)) return
         this.loading = false
       }
 
@@ -247,14 +254,18 @@ export function useReview() {
         this.loadDaily(),
         this.loadCoverage(),
       ])
+      if (!isCurrentSession(session)) return
       await this.loadSprint()
+      if (!isCurrentSession(session)) return
     },
 
     async loadDaily() {
+      const session = getSession()
       this.dailyLoading = true
       this.dailyError = ''
       try {
         const data = await api.getReviewDaily()
+        if (!isCurrentSession(session)) return
         // 旧后端/缺字段容错:逐项兜底,单个计数缺失不拖垮整个面板
         this.daily = {
           date: data?.date || '',
@@ -264,18 +275,22 @@ export function useReview() {
           new_count: Number(data?.new_count) || 0,
         }
       } catch (err) {
+        if (!isCurrentSession(session)) return
         this.daily = { date: '', new_episodes: [], due_count: 0, overdue_count: 0, new_count: 0 }
         this.dailyError = err.message
       } finally {
+        if (!isCurrentSession(session)) return
         this.dailyLoading = false
       }
     },
 
     async loadCoverage() {
+      const session = getSession()
       this.coverageLoading = true
       this.coverageError = ''
       try {
         const data = await api.getReviewCoverage()
+        if (!isCurrentSession(session)) return
         this.coverage = listFrom(data, ['directions']).map((dir) => ({
           direction: dir?.direction || 'other',
           name: dir?.name || '',
@@ -286,9 +301,11 @@ export function useReview() {
           uncovered_high: Array.isArray(dir?.uncovered_high) ? dir.uncovered_high : [],
         }))
       } catch (err) {
+        if (!isCurrentSession(session)) return
         this.coverage = []
         this.coverageError = err.message
       } finally {
+        if (!isCurrentSession(session)) return
         this.coverageLoading = false
       }
     },
@@ -298,12 +315,14 @@ export function useReview() {
     },
 
     async hydratePlanIds(items) {
+      const session = getSession()
       const missing = items.filter((item) => item.plan_id == null && item.plan_title)
       if (!missing.length) return items
 
       try {
         if (!Object.keys(this.planIdsByTitle).length) {
           const plans = await api.listPlans()
+          if (!isCurrentSession(session)) return
           const listed = listFrom(plans, ['items', 'plans'])
           for (const plan of listed) {
             if (!plan?.title || plan?.id == null) continue
@@ -318,9 +337,11 @@ export function useReview() {
             if (plan?.id == null || !unresolvedTitles.size) continue
             try {
               const detail = await api.getPlan(plan.id)
+              if (!isCurrentSession(session)) return
               if (detail?.title) this.planIdsByTitle[detail.title] = plan.id
               unresolvedTitles.delete(detail?.title)
             } catch {
+              if (!isCurrentSession(session)) return
               // 单个计划详情失败时继续补全其他计划。
             }
           }
@@ -329,62 +350,79 @@ export function useReview() {
           item.plan_id = this.planIdsByTitle[item.plan_title] ?? null
         }
       } catch {
+        if (!isCurrentSession(session)) return
         // 播放器仍可通过集卡来源提供的 plan_id；补全失败只隐藏播放入口。
       }
       return items
     },
 
     async loadRecommendations() {
+      const session = getSession()
       this.recommendationsLoading = true
       this.recommendationsError = ''
       try {
         const data = await api.getReviewWeakPoints()
+        if (!isCurrentSession(session)) return
         const items = listFrom(data, ['items', 'recommendations'])
           .map(normalizeRecommendation)
           .sort((a, b) => b.weak_question_count - a.weak_question_count)
-        this.recommendations = await this.hydratePlanIds(items)
+        const result = await this.hydratePlanIds(items)
+        if (!isCurrentSession(session)) return
+        this.recommendations = result
       } catch (err) {
+        if (!isCurrentSession(session)) return
         this.recommendations = []
         this.recommendationsError = err.message
       } finally {
+        if (!isCurrentSession(session)) return
         this.recommendationsLoading = false
       }
     },
 
     async loadReplayQueue() {
+      const session = getSession()
       this.replayQueueLoading = true
       this.replayQueueError = ''
       try {
         const data = await api.getReviewReplayQueue()
+        if (!isCurrentSession(session)) return
         const items = listFrom(data, ['items', 'queue'])
           .map(normalizeRecommendation)
           .sort((a, b) =>
             String(a.scheduled_for || '').localeCompare(String(b.scheduled_for || '')) ||
             b.weak_question_count - a.weak_question_count
           )
-        this.replayQueue = await this.hydratePlanIds(items)
+        const result = await this.hydratePlanIds(items)
+        if (!isCurrentSession(session)) return
+        this.replayQueue = result
       } catch (err) {
+        if (!isCurrentSession(session)) return
         this.replayQueue = []
         this.replayQueueError = err.message
       } finally {
+        if (!isCurrentSession(session)) return
         this.replayQueueLoading = false
       }
     },
 
     async loadInterviewDate() {
+      const session = getSession()
       this.dateError = ''
       try {
         const data = await api.getInterviewDate()
+        if (!isCurrentSession(session)) return
         const value = data?.interview_date || data?.date || ''
         this.interviewDate = value ? String(value).slice(0, 10) : ''
         this.savedInterviewDate = this.interviewDate
         this.loadSprintCompletion()
       } catch (err) {
+        if (!isCurrentSession(session)) return
         this.dateError = err.message
       }
     },
 
     async saveInterviewDate() {
+      const session = getSession()
       if (this.interviewDate && !localDate(this.interviewDate)) {
         this.dateError = '请输入有效的面试日期'
         return
@@ -398,29 +436,37 @@ export function useReview() {
       this.dateError = ''
       try {
         const data = await api.setInterviewDate(this.interviewDate || null)
+        if (!isCurrentSession(session)) return
         const value = data?.interview_date ?? data?.date ?? this.interviewDate
         this.interviewDate = value ? String(value).slice(0, 10) : ''
         this.savedInterviewDate = this.interviewDate
         this.loadSprintCompletion()
         this.notice = this.interviewDate ? '面试日期已保存' : '已关闭面试冲刺'
         await this.loadSprint()
+        if (!isCurrentSession(session)) return
       } catch (err) {
+        if (!isCurrentSession(session)) return
         this.dateError = err.message
       } finally {
+        if (!isCurrentSession(session)) return
         this.dateSaving = false
       }
     },
 
     async clearInterviewDate() {
+      const session = getSession()
       this.interviewDate = ''
       await this.saveInterviewDate()
+      if (!isCurrentSession(session)) return
     },
 
     async loadSprint() {
+      const session = getSession()
       this.sprintLoading = true
       this.sprintError = ''
       try {
         const data = await api.getReviewSprint()
+        if (!isCurrentSession(session)) return
         if (!this.interviewDate) {
           const value = data?.interview_date || data?.date || ''
           if (value) {
@@ -434,8 +480,10 @@ export function useReview() {
           (a, b) => b.weak_question_count - a.weak_question_count || b.items.length - a.items.length
         )
         await this.hydratePlanIds(groups.flatMap((group) => group.items))
+        if (!isCurrentSession(session)) return
         this.sprintGroups = groups
       } catch (err) {
+        if (!isCurrentSession(session)) return
         if (!this.savedInterviewDate && err.status === 409) {
           this.sprintGroups = []
           this.sprintMeta = {}
@@ -446,6 +494,7 @@ export function useReview() {
           this.sprintError = err.message
         }
       } finally {
+        if (!isCurrentSession(session)) return
         this.sprintLoading = false
       }
     },
@@ -455,11 +504,13 @@ export function useReview() {
     },
 
     async grade(id, mastery) {
+      const session = getSession()
       if (this.grading[id]) return
       this.grading[id] = true
       this.error = ''
       try {
         const updated = await api.gradeQuestion(id, mastery)
+        if (!isCurrentSession(session)) return
         const index = this.cards.findIndex((card) => String(card.id) === String(id))
         if (index >= 0) {
           const card = { ...this.cards[index], ...updated }
@@ -473,8 +524,10 @@ export function useReview() {
         this.notice = `已标记为${masteryLabels[mastery]}，下次按计划复习`
         void Promise.all([this.loadRecommendations(), this.loadReplayQueue(), this.loadSprint()])
       } catch (err) {
+        if (!isCurrentSession(session)) return
         this.error = err.message
       } finally {
+        if (!isCurrentSession(session)) return
         this.grading[id] = false
       }
     },
@@ -509,7 +562,7 @@ export function useReview() {
       this.sprintCompleted = {}
       if (!this.interviewDate) return
       try {
-        const saved = localStorage.getItem(`${SPRINT_STORAGE_PREFIX}${this.interviewDate}`)
+        const saved = localStorage.getItem(`${SPRINT_STORAGE_PREFIX}${encodeURIComponent(store.getUsername())}.${this.interviewDate}`)
         this.sprintCompleted = saved ? JSON.parse(saved) : {}
       } catch {
         this.sprintCompleted = {}
@@ -520,7 +573,7 @@ export function useReview() {
       if (!this.interviewDate) return
       try {
         localStorage.setItem(
-          `${SPRINT_STORAGE_PREFIX}${this.interviewDate}`,
+          `${SPRINT_STORAGE_PREFIX}${encodeURIComponent(store.getUsername())}.${this.interviewDate}`,
           JSON.stringify(this.sprintCompleted)
         )
       } catch {
@@ -528,6 +581,13 @@ export function useReview() {
       }
     },
   })
+
+  const defaults = {}
+  for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(state))) {
+    if ('value' in descriptor && typeof descriptor.value !== 'function') defaults[key] = descriptor.value
+  }
+  const initial = JSON.stringify(defaults)
+  onSessionChange(() => Object.assign(state, JSON.parse(initial)))
 
   // main.js 与现有模板都以 review.load()/review.grade() 方式调用。
   return {

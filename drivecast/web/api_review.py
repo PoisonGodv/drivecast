@@ -4,10 +4,12 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from ..auth import get_current_user
 from ..library import service as library_service
+from ..models import User
 
 router = APIRouter(prefix="/api", tags=["review"])
 
@@ -30,15 +32,15 @@ class InterviewDateBody(BaseModel):
 
 
 @router.get("/review/daily")
-async def review_daily() -> dict:
+async def review_daily(user: User = Depends(get_current_user)) -> dict:
     """今日学习视图:今天排期的新集 + 复习题到期/逾期/未排期统计。"""
-    return await library_service.daily_plan()
+    return await library_service.daily_plan(user_id=user.id)
 
 
 @router.get("/review/coverage")
-async def review_coverage() -> dict:
+async def review_coverage(user: User = Depends(get_current_user)) -> dict:
     """题库全局覆盖视角:各方向覆盖进度与未覆盖高频题清单。"""
-    return await library_service.coverage()
+    return await library_service.coverage(user_id=user.id)
 
 
 @router.get("/review/today")
@@ -47,9 +49,10 @@ async def review_today(
         None, description="按掌握度过滤"
     ),
     direction: str | None = Query(None, description="按内容方向过滤"),
+    user: User = Depends(get_current_user),
 ) -> list[dict]:
     """今日待复习题:未排期题优先,随后按到期时间排序。"""
-    return await library_service.today_review(mastery=mastery, direction=direction)
+    return await library_service.today_review(mastery=mastery, direction=direction, user_id=user.id)
 
 
 @router.get("/review/questions")
@@ -58,53 +61,59 @@ async def list_questions(
         None, description="按掌握度过滤"
     ),
     direction: str | None = Query(None, description="按内容方向过滤"),
+    user: User = Depends(get_current_user),
 ) -> list[dict]:
     """题库筛选:按 mastery/direction。"""
-    return await library_service.list_questions(mastery=mastery, direction=direction)
+    return await library_service.list_questions(mastery=mastery, direction=direction, user_id=user.id)
 
 
 @router.post("/questions/{question_id}/grade", response_model=GradeOut)
-async def grade_question(question_id: int, body: GradeBody) -> dict:
+async def grade_question(
+    question_id: int, body: GradeBody, user: User = Depends(get_current_user)
+) -> dict:
     """三态可直接流转;标不会回退 unknown,并联动次日重听队列。"""
     try:
-        return await library_service.grade_question(question_id, body.mastery)
+        return await library_service.grade_question(question_id, body.mastery, user_id=user.id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail={"code": 404, "message": str(exc)}) from exc
 
 
 @router.get("/review/weak-points")
-async def weak_points() -> list[dict]:
+async def weak_points(user: User = Depends(get_current_user)) -> list[dict]:
     """列出至少两道薄弱题的知识点及最短相关集推荐。"""
-    return await library_service.weak_points()
+    return await library_service.weak_points(user_id=user.id)
 
 
 @router.get("/review/replay-queue")
 async def replay_queue(
     for_date: date | None = Query(None, description="播放日期;默认今天"),
     refresh: bool = Query(True, description="读取前先按当前薄弱题同步明日队列"),
+    user: User = Depends(get_current_user),
 ) -> list[dict]:
     """持久化重听队列;默认优先返回今日到期任务,今天为空时预览明日。"""
     if refresh and for_date is None:
-        return await library_service.sync_replay_queue()
-    return await library_service.replay_queue(for_date)
+        return await library_service.sync_replay_queue(user_id=user.id)
+    return await library_service.replay_queue(for_date, user_id=user.id)
 
 
 @router.get("/review/interview-date")
-async def get_interview_date() -> dict:
-    interview_date = await library_service.get_interview_date()
+async def get_interview_date(user: User = Depends(get_current_user)) -> dict:
+    interview_date = await library_service.get_interview_date(user_id=user.id)
     return {"interview_date": interview_date.isoformat() if interview_date else None}
 
 
 @router.put("/review/interview-date")
-async def set_interview_date(body: InterviewDateBody) -> dict:
+async def set_interview_date(
+    body: InterviewDateBody, user: User = Depends(get_current_user)
+) -> dict:
     """设置面试日;null 清除冲刺模式。"""
-    return await library_service.set_interview_date(body.interview_date)
+    return await library_service.set_interview_date(body.interview_date, user_id=user.id)
 
 
 @router.get("/review/sprint")
-async def sprint_list() -> dict:
+async def sprint_list(user: User = Depends(get_current_user)) -> dict:
     """按方向分组、按薄弱题数排序的考前三天清单。"""
     try:
-        return await library_service.sprint_list()
+        return await library_service.sprint_list(user_id=user.id)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail={"code": 409, "message": str(exc)}) from exc

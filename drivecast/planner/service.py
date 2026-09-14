@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from ..config import ensure_data_dirs, settings
 from ..content.loader import get_question_bank
@@ -18,33 +19,54 @@ from ..schemas import Direction, EpisodeRec, PlanOut, PlanRec
 DIALOGUE_DIRECTIONS = {"ai_llm", "tech_news"}
 
 
-def _covered_question_ids() -> set[str]:
-    """扫描全部计划文件,汇总已覆盖的题库题 id(文件态即可,不依赖 DB)。"""
+async def _covered_question_ids(user_id: int = 1) -> set[str]:
+    """汇总「该用户」已覆盖的题库题 id。
+
+    plan 文件本身无归属字段,按 DB plan.user_id 取 ext_id 再读对应文件;
+    DB 不可用(纯文件态单测)退化为全量扫描——单用户语义下等价。
+    """
     covered: set[str] = set()
     plans_dir = settings.data_dir / "plans"
     if not plans_dir.exists():
         return covered
-    for path in sorted(plans_dir.glob("plan_*.json")):
+    paths: list[Path] | None = None
+    try:
+        from sqlalchemy import select
+
+        from ..db import session
+        from ..models import Plan
+
+        async with session() as s:
+            ext_ids = (
+                await s.execute(select(Plan.ext_id).where(Plan.user_id == user_id))
+            ).scalars().all()
+        paths = [plans_dir / f"{ext}.json" for ext in ext_ids]
+    except Exception:  # 纯文件态运行(单测/未建表)退化为全量
+        paths = None
+    if paths is None:
+        paths = sorted(plans_dir.glob("plan_*.json"))
+    for path in paths:
         try:
             data = json.loads(path.read_text("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError, OSError):
-            continue  # 坏文件跳过,不阻断新计划生成
+            continue  # 坏文件/占位行未落文件,跳过不阻断新计划生成
         for ep in data.get("episodes", []):
             for qid in ep.get("covers") or []:
                 covered.add(str(qid))
     return covered
 
 
-def _grounding_prompt(direction: str) -> str:
-    """注入全量题簇地图 + 已覆盖题集合,大纲按「未覆盖高频题簇优先」组织(docs/07 §2)。
+async def _grounding_prompt(direction: str, user_id: int = 1) -> str:
+    """注入全量题簇地图 + 该用户已覆盖题集合,大纲按「未覆盖高频题簇优先」组织(docs/07 §2)。
 
     按 topic 首元素聚簇:每簇给高/中/低频题数统计与代表性题面(高频全列、
     中低频每簇最多 3 条),并附题 id 供 LLM 填 covers;控制总量防 prompt 爆炸。
+    覆盖集合必须按用户取,否则 A 的学习进度会把 B 的大纲高频题标成 [已覆盖]。
     """
     questions = get_question_bank(direction)
     if not questions:
         return ""
-    covered = _covered_question_ids()
+    covered = await _covered_question_ids(user_id)
 
     # loader 已按 frequency(high→mid→low)稳定排序,聚簇保序即可
     clusters: dict[str, list[dict]] = {}
@@ -115,12 +137,14 @@ async def create_plan(
     episode_count: int | None = None,
     target_minutes: int | None = None,
     plan_id: str | None = None,
+    user_id: int | None = None,
 ) -> PlanRec:
+    """user_id 仅在 Web 异步链路由 worker 传入(job.user_id);CLI/测试缺省 admin(=1)。"""
     count = episode_count or settings.default_episode_count
     minutes = target_minutes or settings.target_minutes
 
     user = prompts.planner_user(topic, direction, count, target_minutes=minutes)
-    grounding = _grounding_prompt(direction)
+    grounding = await _grounding_prompt(direction, user_id or 1)
     if grounding:
         user += f"\n\n{grounding}"
 
@@ -171,5 +195,5 @@ async def create_plan(
         episodes=episodes,
     )
     save_plan(plan)
-    await upsert_plan(plan)  # 双写 DB(docs/05 M2-1)
+    await upsert_plan(plan, user_id=user_id)  # 双写 DB(docs/05 M2-1)
     return plan

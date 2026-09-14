@@ -6,12 +6,15 @@
   python -m drivecast worker                     # 消费 job 队列(中断恢复)
   python -m drivecast list <plan_id>             # 看计划与状态
   python -m drivecast dbsync                     # 存量文件产物导入 DB
+  python -m drivecast create-user <username>     # 建登录用户(无注册接口)
+  python -m drivecast reset-password <username>  # 重置密码(0006 后给 admin 后置密码)
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
 import json
+import os
 import sys
 
 from sqlalchemy import select
@@ -19,7 +22,7 @@ from sqlalchemy import select
 from .config import ensure_data_dirs, settings
 from .db import session
 from .library import service as library
-from .models import Episode, Plan
+from .models import Episode, Plan, User
 from .planner import service as planner
 from .schemas import Direction
 from .scriptwriter import service as scriptwriter
@@ -167,6 +170,64 @@ async def cmd_list(args) -> None:
         print(f"  {ep.seq}. [{status}] {ep.title}  脚本={'✓' if has_script else '✗'}")
 
 
+def _read_password(username: str, password_arg: str | None) -> str:
+    """密码来源优先级: --password > 环境变量 DRIVECAST_USER_PASSWORD > 交互输入(无 tty 报错)。"""
+    if password_arg:
+        return password_arg
+    env_pw = os.environ.get("DRIVECAST_USER_PASSWORD")
+    if env_pw:
+        return env_pw
+    if not sys.stdin.isatty():
+        sys.exit(
+            "未提供密码:请用 --password <pw> 或环境变量 DRIVECAST_USER_PASSWORD"
+            "(当前非交互环境,无法交互输入)"
+        )
+    import getpass
+
+    pw = getpass.getpass(f"为用户 {username} 设置密码: ")
+    if not pw:
+        sys.exit("密码不能为空")
+    return pw
+
+
+async def cmd_create_user(args) -> None:
+    """建登录用户(系统不提供注册 API,用户只能从这里来)。"""
+    from . import auth
+    from .db import init_db
+
+    await init_db()  # 空库自动建表;旧 schema 会得到"先跑 alembic"的可操作报错
+    password = _read_password(args.username, args.password)
+    async with session() as s:
+        exists = (
+            await s.execute(select(User).where(User.username == args.username))
+        ).scalar_one_or_none()
+        if exists is not None:
+            sys.exit(f"用户 '{args.username}' 已存在(id={exists.id});如需改密码请用 reset-password")
+        user = User(username=args.username, password_hash=auth.hash_password(password))
+        s.add(user)
+        await s.commit()
+        print(f"用户已创建: id={user.id} username={user.username}")
+
+
+async def cmd_reset_password(args) -> None:
+    """重置密码;旧 JWT 无撤销机制,自然过期前(最长 7 天)仍有效。"""
+    from . import auth
+    from .db import init_db
+
+    await init_db()
+    password = _read_password(args.username, args.password)
+    async with session() as s:
+        user = (
+            await s.execute(select(User).where(User.username == args.username))
+        ).scalar_one_or_none()
+        if user is None:
+            sys.exit(f"用户 '{args.username}' 不存在;可用 create-user 创建")
+        user.password_hash = auth.hash_password(password)
+        await s.commit()
+        print(f"密码已重置: id={user.id} username={user.username}")
+        print("提示:已签发的旧 token 在自然过期前(最长 7 天)仍然有效。")
+
+
 def main() -> None:
     ensure_data_dirs()
     p = argparse.ArgumentParser(prog="drivecast", description="通勤技术播客生成器")
@@ -194,16 +255,34 @@ def main() -> None:
     sub.add_parser("worker", help="消费 job 队列(中断恢复)")
     sub.add_parser("dbsync", help="存量文件产物导入 DB")
 
+    for name, helptext in [
+        ("create-user", "创建登录用户(密码 --password 或环境变量 DRIVECAST_USER_PASSWORD)"),
+        ("reset-password", "重置用户密码"),
+    ]:
+        sp = sub.add_parser(name, help=helptext)
+        sp.add_argument("username")
+        sp.add_argument("--password", default=None, help="明文密码;缺省读环境变量或交互输入")
+
     sp = sub.add_parser("list", help="查看计划")
     sp.add_argument("plan_id")
 
     args = p.parse_args()
-    if args.cmd == "list":
-        return asyncio.run(cmd_list(args))
-    asyncio.run({
+    commands = {
         "plan": cmd_plan, "script": cmd_script, "tts": cmd_tts, "episode": cmd_episode,
         "generate": cmd_generate, "worker": cmd_worker, "dbsync": cmd_dbsync,
-    }[args.cmd](args))
+        "list": cmd_list, "create-user": cmd_create_user, "reset-password": cmd_reset_password,
+    }
+
+    async def run_command() -> None:
+        from .db import close_db, init_db
+
+        try:
+            await init_db()  # 任一 CLI 写入之前均先完成迁移并保留 admin
+            await commands[args.cmd](args)
+        finally:
+            await close_db()
+
+    asyncio.run(run_command())
 
 
 if __name__ == "__main__":

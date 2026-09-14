@@ -275,6 +275,39 @@
   background: rgba(138, 180, 248, 0.15);
 }
 
+/* 登录视图:垂直居中的窄卡片,复用 card/form/btn 体系 */
+.auth-page {
+  display: flex;
+  align-items: center;
+  min-height: calc(100vh - 96px);
+  padding-bottom: calc(24px + var(--safe-bottom));
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+  margin: 0 auto;
+  padding: 28px 22px;
+}
+
+.auth-eyebrow {
+  color: var(--accent);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.auth-title {
+  margin: 6px 0 4px;
+}
+
+.auth-sub {
+  margin: 0 0 20px;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
 /* 播放器页 */
 .player-page {
   display: flex;

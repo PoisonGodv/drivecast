@@ -2,17 +2,40 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import re
 import sys
 import traceback
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from ..auth import get_current_user
 from ..config import ensure_data_dirs, settings
 from ..db import close_db, init_db
 from ..jobs import worker
-from . import api_audio, api_plans, api_review
+from . import api_audio, api_auth, api_plans, api_review
+
+# uvicorn access log 会打出完整 query(SSE/audio 的 ?token= 会泄进日志),
+# 给 uvicorn.access 挂 logger 级过滤器把 token 值替换成 ***。装在 app 模块级:
+# 无论经 run.py 还是 `uvicorn drivecast.web.main:app` 等任何方式启动都生效。
+# 业务代码不打印 request.url。
+_TOKEN_QS = re.compile(r"([?&])token=[^&\s]+")
+
+
+class _RedactTokenFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and args:
+            record.args = tuple(
+                _TOKEN_QS.sub(r"\1token=***", arg) if isinstance(arg, str) else arg
+                for arg in args
+            )
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_RedactTokenFilter())
 
 _worker_task: asyncio.Task | None = None
 
@@ -52,10 +75,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="DriveCast", lifespan=lifespan)
 
-# API 路由先于 static mount,避免被 StaticFiles 拦截
-app.include_router(api_plans.router)
-app.include_router(api_audio.router)
-app.include_router(api_review.router)
+# API 路由先于 static mount,避免被 StaticFiles 拦截。
+# 业务路由统一挂 get_current_user(Bearer 头;SSE/audio 两类 GET 额外走 ?token= 白名单,
+# 见 drivecast/auth.py)。api_auth 自身不挂:login 必须匿名可达,/me 在 handler 内声明依赖。
+app.include_router(api_auth.router)
+app.include_router(api_plans.router, dependencies=[Depends(get_current_user)])
+app.include_router(api_audio.router, dependencies=[Depends(get_current_user)])
+app.include_router(api_review.router, dependencies=[Depends(get_current_user)])
 
 class NoCacheStaticFiles(StaticFiles):
     """无构建前端禁止强缓存,确保更新即生效,彻底杜绝 Safari 混用旧 JS。"""

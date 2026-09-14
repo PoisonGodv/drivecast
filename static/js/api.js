@@ -3,28 +3,56 @@
  *
  * 端点与错误体以 docs/02-architecture.md §4 为权威；
  * 所有 fetch 统一处理 JSON 与网络错误，抛出 Error(message)。
+ *
+ * 登录凭证(docs/04-frontend.md §5.4)：token 存 localStorage(drivecast:token)，
+ * request() 统一注入 Authorization: Bearer 头；收到 401 时清 token 并广播
+ * drivecast:unauthorized 事件，由 main.js 切到登录视图(登录请求自身豁免)。
+ * EventSource / <audio> 无法自定义请求头，这两类 GET 端点用 withToken() 拼 ?token=。
  */
 
+import { getSession, assertSession, isCurrentSession } from './session.js'
+import { store } from './store.js?v=20260914b'
+
 const API_BASE = '' // 同源，FastAPI StaticFiles 与 API 同 host
+const LOGIN_PATH = '/api/auth/login'
+
+/** 401 统一广播：main.js 监听后清应用态并切登录视图 */
+function notifyUnauthorized() {
+  window.dispatchEvent(new CustomEvent('drivecast:unauthorized'))
+}
 
 async function request(path, options = {}) {
+  const session = getSession()
   const url = `${API_BASE}${path}`
   const init = {
-    headers: { 'Content-Type': 'application/json' },
     ...options,
+    signal: session.signal,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
   }
   if (init.body && typeof init.body === 'object') {
     init.body = JSON.stringify(init.body)
   }
+  const token = store.getToken()
+  if (token) init.headers.Authorization = `Bearer ${token}`
 
   let res
   try {
     res = await fetch(url, init)
   } catch (err) {
+    assertSession(session)
     throw new Error(`网络异常：${err.message || '无法连接后端'}`)
   }
 
+  assertSession(session)
   if (!res.ok) {
+    // 登录过期/无效：清凭证并通知切登录视图；登录请求自身的 401 豁免(防死循环)
+    if (res.status === 401 && path !== LOGIN_PATH) {
+      store.clearToken()
+      notifyUnauthorized()
+    }
     let msg = `HTTP ${res.status}`
     try {
       const body = await res.json()
@@ -39,10 +67,32 @@ async function request(path, options = {}) {
   }
 
   if (res.status === 204) return null
-  return res.json()
+  const body = await res.json()
+  assertSession(session)
+  return body
+}
+
+/**
+ * 给无法携带 Authorization 头的 URL(SSE EventSource / <audio> src / <a download)
+ * 追加 ?token= 查询参数。仅对本站相对路径生效，token 不外带到外域。
+ */
+export function withToken(url) {
+  if (!url || !url.startsWith('/') || url.startsWith('//') || url.includes('\\')) return url
+  const token = store.getToken()
+  if (!token) return url
+  return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
 }
 
 export const api = {
+  // 登录 / 当前用户(docs/04-frontend.md §5.4)
+  login: (username, password) =>
+    request(LOGIN_PATH, {
+      method: 'POST',
+      body: { username, password },
+    }),
+
+  getMe: () => request('/api/auth/me'),
+
   // 主题 / 计划
   createTopic: (title, direction) =>
     request('/api/topics', {
@@ -119,12 +169,23 @@ export const api = {
 export function connectPlanEvents(planId, handlers) {
   /**
    * SSE 连接，docs/04-frontend.md §3.2。
+   * EventSource 不能自定义请求头，用 ?token= 传递凭证(后端白名单 GET 端点)。
    * 返回 { close() }，由调用方在页面卸载时关闭。
    */
-  const url = `${API_BASE}/api/plans/${planId}/events`
+  const url = withToken(`${API_BASE}/api/plans/${planId}/events`)
+  const session = getSession()
+  assertSession(session)
   const es = new EventSource(url)
+  let closed = false
+  const close = () => {
+    closed = true
+    es.close()
+    session.signal.removeEventListener('abort', close)
+  }
+  session.signal.addEventListener('abort', close, { once: true })
 
   es.addEventListener('episode_status', (e) => {
+    if (closed || !isCurrentSession(session)) return
     try {
       handlers.onEpisode(JSON.parse(e.data))
     } catch (err) {
@@ -133,6 +194,7 @@ export function connectPlanEvents(planId, handlers) {
   })
 
   es.addEventListener('plan_status', (e) => {
+    if (closed || !isCurrentSession(session)) return
     try {
       handlers.onPlan(JSON.parse(e.data))
     } catch (err) {
@@ -141,13 +203,12 @@ export function connectPlanEvents(planId, handlers) {
   })
 
   es.onerror = (err) => {
+    if (closed || !isCurrentSession(session)) return
     console.warn('SSE error', err)
     if (handlers.onError) handlers.onError(err)
   }
 
   return {
-    close: () => {
-      es.close()
-    },
+    close,
   }
 }

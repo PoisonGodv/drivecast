@@ -44,31 +44,41 @@ def _initial_review_at(scheduled_date: str | None) -> str:
     return _dt_text(target if target > now else now)
 
 
-async def upsert_plan(plan: PlanRec) -> None:
+async def upsert_plan(plan: PlanRec, user_id: int | None = None) -> None:
+    """文件态计划落 DB;归属解析:既有占位行(Web 异步创建已带 user_id)> 入参 > admin(=1)。
+
+    topic 按标题+方向在归属者范围内复用,避免两用户同题名互相接管对方 topic。
+    """
     async with session() as s:
+        plan_row = await s.scalar(select(Plan).where(Plan.ext_id == plan.plan_id))
+        owner = plan_row.user_id if plan_row is not None else (user_id if user_id is not None else 1)
+
         topic_id = await s.scalar(
-            select(Topic.id).where(Topic.title == plan.user_topic, Topic.direction == plan.direction)
+            select(Topic.id).where(
+                Topic.title == plan.user_topic,
+                Topic.direction == plan.direction,
+                Topic.user_id == owner,
+            )
         )
         if topic_id is None:
-            t = Topic(title=plan.user_topic, direction=plan.direction)
+            t = Topic(title=plan.user_topic, direction=plan.direction, user_id=owner)
             s.add(t)
             await s.flush()
             topic_id = t.id
 
-        plan_row = await s.scalar(select(Plan).where(Plan.ext_id == plan.plan_id))
         if plan_row is None:
             p = Plan(ext_id=plan.plan_id, topic_id=topic_id, title=plan.title,
-                     status="active", episode_count=len(plan.episodes))
+                     status="active", episode_count=len(plan.episodes), user_id=owner)
             s.add(p)
             await s.flush()
-            plan_id = p.id
+            plan_id_db = p.id
         else:
-            plan_id = plan_row.id
+            plan_id_db = plan_row.id
             values: dict = {"title": plan.title, "episode_count": len(plan.episodes)}
             # 异步创建的 generating 占位行在此转正;cancelled 等终态绝不回捞
             if plan_row.status == "generating":
                 values["status"] = "active"
-            await s.execute(update(Plan).where(Plan.id == plan_id).values(**values))
+            await s.execute(update(Plan).where(Plan.id == plan_id_db).values(**values))
 
         for ep in plan.episodes:
             covers_json = json.dumps(ep.covers, ensure_ascii=False)
@@ -76,7 +86,7 @@ async def upsert_plan(plan: PlanRec) -> None:
             exists = await s.scalar(select(Episode.id).where(Episode.ext_id == ep.episode_id))
             if exists is None:
                 s.add(Episode(
-                    ext_id=ep.episode_id, plan_id=plan_id, seq=ep.seq, title=ep.title,
+                    ext_id=ep.episode_id, plan_id=plan_id_db, seq=ep.seq, title=ep.title,
                     outline=ep.outline, objectives=json.dumps(ep.objectives, ensure_ascii=False),
                     script_format=ep.script_format, status=ep.status,
                     scheduled_date=scheduled_date, covers=covers_json,

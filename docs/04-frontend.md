@@ -11,13 +11,14 @@
 
 | 路由 | 页面 | 职责 |
 |---|---|---|
+| `#/login` | 登录 | 用户名+密码表单,签发 JWT 后回跳原视图(§5.4) |
 | `/` | 首页 | 今日推荐 + 进行中的计划 + 快速入口 |
 | `/create` | 创建计划 | 输入主题 → 选方向 → 定集数 → 确认大纲 |
 | `/plan/:id` | 计划详情 | 剧集列表 + 每集生成状态/进度 + 播放入口 |
 | `#/play/:episodeId` | 播放页 | 开车场景核心页(详见 §2) |
 | `/review` | 题库复习页 | 卡片式自测,按掌握度标记(详见 §4) |
 
-不做注册登录(本地单用户),不做导航栏之外的冗余信息架构。顶部仅 4 个 tab:首页 / 新建 / 复习 / 播放(有在播集时显示)。
+不提供注册页(账号由 CLI `python -m drivecast create-user` 管理),不做导航栏之外的冗余信息架构。顶部 4 个 tab:首页 / 新建 / 复习 / 播放(有在播集时显示),右侧挂当前用户名与"退出"入口。未登录时任何视图先落 `#/login`,登录成功后回跳原视图。
 
 ### 1.2 用户动线
 
@@ -243,3 +244,14 @@ static/
 | `GET/PUT /api/playback/position` | 播放进度存取 |
 
 **性能注意点**:音频接口必须支持 HTTP `Range` 请求(否则进度条拖动和断点续播失效);音频文件按集落盘、用文件流返回,不要整文件读进内存。
+
+### 5.4 登录与凭证(2026-09 多用户改造)
+
+用户名+密码登录,后端签发 HS256 JWT(7 天过期),多用户数据隔离以服务端为准;前端只负责凭证的存取、注入与过期后的跳转。
+
+- **凭证存取**:`store.js` 统一管理,token 存 `localStorage['drivecast:token']`(沿用 `drivecast:` 前缀),同时缓存用户名供展示;`getToken/setToken/clearToken` 是唯一入口。
+- **请求注入**:`api.js` 的 `request()` 统一加 `Authorization: Bearer <token>` 头。
+- **401 处理**:任何非登录请求收到 401 → 清 token → 广播 `drivecast:unauthorized` 事件;`main.js` 监听后停播、断开 SSE、切到 `#/login` 并记住来路。登录请求(`POST /api/auth/login`)自身豁免,防止 401 死循环。
+- **SSE 与音频例外**:`EventSource` 和 `<audio>/<a download>` 无法自定义请求头,这三类 GET(`/api/plans/{id}/events`、`/api/episodes/{id}/audio(/download)`)用 `withToken()` 拼 `?token=` 查询参数(后端仅对这 3 个 GET 端点开放 query token,其余端点带 `?token=` 也当无凭证)。`withToken` 只对本站相对路径生效,不把 token 外带到外域。
+- **路由守卫与启动验活**:启动时若有 token 先 `GET /api/auth/me` 验活(校验期间显示 loading,防登录页闪烁);未登录访问任何视图先落 `#/login`,`pendingHash` 记住原视图,登录成功后回跳;已登录访问 `#/login` 自动回首页。`EventSource` 401 会静默循环重连且无法被 fetch 拦截,SSE `onerror` 时探测一次 `/api/auth/me`,失效即走统一 401 路径踢回登录。
+- **退出登录**:头部"退出"入口 → 停播、断开 SSE、清 token、回 `#/login`。

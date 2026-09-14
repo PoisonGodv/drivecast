@@ -13,3 +13,5 @@ aiosqlite~=0.21
 alembic~=1.17
 pydub~=0.25
 audioop-lts~=0.2
+# 用户名+密码登录:HS256 JWT 签发/校验(纯 Python,无 C 扩展)
+PyJWT~=2.14

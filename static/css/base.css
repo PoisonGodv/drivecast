@@ -129,6 +129,8 @@ img {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   padding-top: 12px;
   padding-bottom: 12px;
 }
@@ -160,6 +162,47 @@ img {
 .nav-tab.active {
   background: var(--bg-soft);
   color: var(--text);
+}
+
+/* 顶部导航右侧:当前用户 + 退出登录(登录后显示) */
+.nav-user {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+  min-height: var(--touch-min);
+}
+
+.nav-username {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.nav-logout {
+  min-height: var(--touch-min);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  transition: background 0.15s, color 0.15s;
+}
+
+.nav-logout:active {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+/* 窄屏隐藏用户名,只留退出按钮,防止导航溢出 */
+@media (max-width: 480px) {
+  .nav-username {
+    display: none;
+  }
 }
 
 /* 表单 */
