@@ -219,36 +219,56 @@ def _section_rows(chunks: list[dict]) -> list[dict]:
     return rows
 
 
-async def _synth_missing(ep_id: str, chunks: list[dict]) -> list[Path]:
+async def _synth_missing(ep_id: str, chunks: list[dict], *, local_only: bool = False) -> list[Path]:
     """只合成缺失的 chunk(断点续核心)，返回有序路径。"""
     provider = doubao if settings.tts_provider == "doubao" else edge
     chunks_dir = settings.chunks_dir(ep_id)
     paths = [chunks_dir / f"{c['seq']:03d}.mp3" for c in chunks]
-    missing = [(c, p) for c, p in zip(chunks, paths) if not (p.exists() and p.stat().st_size > 0)]
+    cached_durations = await _chunk_durations(paths)
+    missing = [(c, p) for c, p, d in zip(chunks, paths, cached_durations) if d <= 0]
+    if missing and local_only:
+        raise RuntimeError("本地升级缺少有效音频块，未调用 TTS")
     if missing:
         print(f"[tts] {ep_id}: {len(chunks)} 段,需合成 {len(missing)} 段")
     for index, (chunk, path) in enumerate(missing, 1):
         print(f"[tts] 合成 {chunk['seq']:03d}/{len(chunks)} ({len(chunk['text'])}字) "
               f"[{index}/{len(missing)}]")
         await provider.synth_chunk(chunk["text"], chunk["voice"], chunk["rate"], path)
+        if await _probe_duration(path) <= 0:
+            path.unlink(missing_ok=True)
+            raise RuntimeError(f"chunk 无法探测时长:{chunk['seq']}")
         await provider.jitter_sleep()
     return paths
 
 
 async def _probe_duration(path: Path) -> float:
-    proc = await asyncio.create_subprocess_exec(
-        "ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", str(path),
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, _ = await proc.communicate()
-    try:
-        return float(json.loads(stdout.decode())["format"]["duration"])
-    except (KeyError, ValueError, TypeError, json.JSONDecodeError):
+    from ..concurrency import request_limit
+    if not path.is_file() or path.stat().st_size == 0:
         return 0.0
+    async with request_limit("probe"):
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", str(path),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        except BaseException:
+            if proc.returncode is None:
+                proc.kill()
+            await proc.communicate()
+            raise
+        if proc.returncode:
+            return 0.0
+        try:
+            value = float(json.loads(stdout.decode())["format"]["duration"])
+            from .quality import positive
+            return value if positive(value) else 0.0
+        except (KeyError, ValueError, TypeError, json.JSONDecodeError):
+            return 0.0
 
 
 async def _chunk_durations(paths: list[Path]) -> list[float]:
-    return list(await asyncio.gather(*(_probe_duration(path) for path in paths)))
+    from ..concurrency import gather_cancel
+    return list(await gather_cancel(*(_probe_duration(path) for path in paths)))
 
 
 def _gap_ms(chunks: list[dict], index: int) -> int:
@@ -394,15 +414,17 @@ async def _peak_db(path: Path) -> float | None:
 def _chunk_consistency(chunks: list[dict], paths: list[Path], durations: list[float]) -> dict:
     existing = sum(path.exists() and path.stat().st_size > 0 for path in paths)
     valid_duration = sum(duration > 0 for duration in durations)
-    rates = [len(chunk.get("text", "")) / duration for chunk, duration in zip(chunks, durations)
+    pairs = [(chunk["seq"], len(chunk.get("text", "")) / duration)
+             for chunk, duration in zip(chunks, durations)
              if duration > 0 and len(chunk.get("text", "")) > 0]
+    rates = [rate for _, rate in pairs]
     outliers: list[int] = []
     if len(rates) >= 4:
         median = statistics.median(rates)
         deviations = [abs(rate - median) for rate in rates]
         mad = statistics.median(deviations)
         if mad > 0:
-            outliers = [chunks[index]["seq"] for index, rate in enumerate(rates)
+            outliers = [seq for seq, rate in pairs
                         if abs(rate - median) / mad > 6]
     return {
         "expected": len(chunks),
@@ -414,37 +436,13 @@ def _chunk_consistency(chunks: list[dict], paths: list[Path], durations: list[fl
 
 
 def _quality_report(
-    *, duration: float, estimated_duration_sec: float, peak_db: float | None,
+    *, duration: float, estimated_duration_sec: float | None, peak_db: float | None,
     chunks: list[dict], paths: list[Path], durations: list[float],
+    target_minutes: float | None = None,
 ) -> dict:
-    error_pct = (
-        abs(duration - estimated_duration_sec) / estimated_duration_sec * 100
-        if estimated_duration_sec else 0.0
-    )
-    chunk_check = _chunk_consistency(chunks, paths, durations)
-    checks = {
-        "duration_range": {
-            "value_sec": round(duration, 3),
-            "min_sec": settings.quality_min_minutes * 60,
-            "max_sec": settings.quality_max_minutes * 60,
-            "passed": settings.quality_min_minutes * 60 <= duration <= settings.quality_max_minutes * 60,
-        },
-        "target_duration_error": {
-            "estimated_sec": round(estimated_duration_sec, 3),
-            "error_pct": round(error_pct, 2),
-            "max_error_pct": settings.quality_duration_error_pct,
-            "passed": error_pct <= settings.quality_duration_error_pct,
-        },
-        "peak": {
-            "max_volume_db": peak_db,
-            "limit_db": settings.quality_max_peak_db,
-            "clipping_detected": peak_db is not None and peak_db > settings.quality_max_peak_db,
-            "passed": peak_db is not None and peak_db <= settings.quality_max_peak_db,
-        },
-        "chunks": chunk_check,
-    }
-    failed = [name for name, check in checks.items() if not check["passed"]]
-    return {"status": "passed" if not failed else "warning", "failed_checks": failed, "checks": checks}
+    from .quality import report
+    return report(duration, estimated_duration_sec, target_minutes, peak_db,
+                  _chunk_consistency(chunks, paths, durations))
 
 
 def _history_wpm(exclude_episode_id: str) -> list[float]:
@@ -480,7 +478,22 @@ def _calibration(ep_id: str, actual_wpm: float) -> dict:
     }
 
 
-async def synthesize_episode(script: dict, *, album: str = "") -> dict:
+def _requested_minutes(script: dict, meta: dict | None = None) -> float | None:
+    from .quality import positive
+    target = script.get("target_minutes")
+    if not positive(target) and script.get("plan_id"):
+        try:
+            from ..planner.service import load_plan
+            plan = load_plan(script["plan_id"])
+            target = next(e.target_minutes for e in plan.episodes if e.episode_id == script["episode_id"])
+        except (OSError, ValueError, StopIteration):
+            target = None
+    if not positive(target):
+        target = (meta or {}).get("target_minutes")
+    return float(target) if positive(target) else None
+
+
+async def synthesize_episode(script: dict, *, album: str = "", local_only: bool = False) -> dict:
     """整集合成入口；M6 旧成品会仅重跑本地后处理，不会重新请求 TTS/LLM。"""
     ep_id = script["episode_id"]
     final = settings.episode_audio_path(ep_id)
@@ -488,6 +501,9 @@ async def synthesize_episode(script: dict, *, album: str = "") -> dict:
     if final.exists() and final.stat().st_size > 0 and meta_path.exists():
         existing_meta = json.loads(meta_path.read_text("utf-8"))
         if existing_meta.get("pipeline_version", 0) >= AUDIO_PIPELINE_VERSION:
+            from .quality import stale
+            if stale(existing_meta):
+                return await recheck_quality(script)
             tts_payload = (json.loads(settings.tts_path(ep_id).read_text("utf-8"))
                            if settings.tts_path(ep_id).exists() else {})
             voices = "+".join(sorted({chunk.get("voice", "") for chunk in tts_payload.get("chunks", [])
@@ -503,7 +519,7 @@ async def synthesize_episode(script: dict, *, album: str = "") -> dict:
     else:
         chunks = build_tts_json(script)
 
-    paths = await _synth_missing(ep_id, chunks)
+    paths = await _synth_missing(ep_id, chunks, local_only=local_only)
     if len(paths) != len(chunks):
         raise RuntimeError(f"chunk 数不一致:期望 {len(chunks)},实际 {len(paths)}")
     durations = await _chunk_durations(paths)
@@ -521,18 +537,18 @@ async def synthesize_episode(script: dict, *, album: str = "") -> dict:
     peak = await _peak_db(final)
     total_chars = sum(len(chunk["text"]) for chunk in chunks)
     actual_wpm = total_chars / (duration / 60) if duration else 0.0
-    target_minutes = float(script.get("target_minutes") or (script.get("target_words", 0) / settings.words_per_minute)
-                           or settings.target_minutes)
+    target_minutes = _requested_minutes(script)
     calibration = _calibration(ep_id, actual_wpm)
-    recommended_wpm = float(calibration["recommended_words_per_minute"] or settings.words_per_minute)
-    estimated_duration_sec = total_chars / recommended_wpm * 60 if recommended_wpm else target_minutes * 60
+    history = _history_wpm(ep_id)
+    recommended_wpm = float(statistics.median(history) if len(history) >= settings.speech_rate_min_samples else settings.words_per_minute)
+    estimated_duration_sec = total_chars / recommended_wpm * 60 if recommended_wpm else None
     duration_error_pct = (
         (duration - estimated_duration_sec) / estimated_duration_sec * 100
         if estimated_duration_sec else 0.0
     )
     quality = _quality_report(
         duration=duration, estimated_duration_sec=estimated_duration_sec, peak_db=peak,
-        chunks=chunks, paths=paths, durations=durations,
+        chunks=chunks, paths=paths, durations=durations, target_minutes=target_minutes,
     )
     meta = {
         "pipeline_version": AUDIO_PIPELINE_VERSION,
@@ -562,7 +578,7 @@ async def synthesize_episode(script: dict, *, album: str = "") -> dict:
         "quality": quality,
         "status": "ready",
     }
-    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), "utf-8")
+    _atomic_meta(meta_path, meta)
 
     voices = "+".join(sorted({chunk["voice"] for chunk in chunks}))
     from ..persist import upsert_audio  # 延迟导入防环
@@ -571,4 +587,55 @@ async def synthesize_episode(script: dict, *, album: str = "") -> dict:
         print(f"[warn] {ep_id} 音频质检告警:{','.join(quality['failed_checks'])}")
     print(f"[tts] {ep_id} 完成:{duration / 60:.1f} 分钟,{len(chunks)} 段,"
           f"实测语速 {meta['words_per_min']} 字/分,章节 {len(chapters)} 个")
+    return meta
+
+
+def _atomic_meta(path: Path, meta: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    part = path.with_suffix(".json.part")
+    part.write_text(json.dumps(meta, ensure_ascii=False, indent=2), "utf-8")
+    part.replace(path)
+
+
+async def recheck_quality(script: dict) -> dict:
+    """只更新质量快照，不修改成品，不调用合成或转码。"""
+    from .quality import report, positive
+    ep_id = script["episode_id"]
+    final = settings.episode_audio_path(ep_id)
+    if not final.is_file():
+        raise RuntimeError("无成品音频可重检")
+    meta_path = settings.meta_path(ep_id)
+    try:
+        meta = json.loads(meta_path.read_text("utf-8"))
+    except (OSError, ValueError):
+        from ..db import session
+        from ..models import Audio, Episode
+        from sqlalchemy import select
+        async with session() as db:
+            raw = await db.scalar(select(Audio.meta_json).join(Episode, Episode.id == Audio.episode_id).where(Episode.ext_id == ep_id))
+        meta = json.loads(raw or "{}")
+    duration = await _probe_duration(final)
+    if duration <= 0:
+        raise RuntimeError("成品音频无法探测时长")
+    target = _requested_minutes(script, meta)
+    estimated = meta.get("duration_estimate", {}).get("estimated_sec")
+    tts_path = settings.tts_path(ep_id)
+    try:
+        chunks = json.loads(tts_path.read_text("utf-8")).get("chunks", [])
+    except (OSError, ValueError):
+        chunks = []
+    paths = [settings.chunks_dir(ep_id) / f"{int(c['seq']):03d}.mp3" for c in chunks]
+    if chunks and all(p.is_file() for p in paths):
+        durations = await _chunk_durations(paths)
+        chunk_check = _chunk_consistency(chunks, paths, durations)
+    else:
+        chunk_check = {"passed": None, "reason": "旧音频缺少分段验证材料"}
+    meta.update(episode_id=ep_id, audio_path=str(final), duration_sec=duration)
+    if positive(target):
+        meta["target_minutes"] = target
+    meta["quality"] = report(duration, estimated, target, await _peak_db(final), chunk_check)
+    _atomic_meta(meta_path, meta)
+    from ..persist import upsert_audio
+    voices = "+".join(sorted({c.get("voice", "") for c in chunks if c.get("voice")}))
+    await upsert_audio(ep_id, meta, voices)
     return meta

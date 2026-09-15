@@ -13,6 +13,13 @@
   2. 微软 edge-tts 公共服务（`speech.platform.bing.com`，WSS 443）——音频合成走它
 - **多用户认证**：Web 使用密码登录 + JWT Bearer，业务资源按用户隔离；没有公开注册 API，用户由本机 CLI 管理。对外仍必须启用 §6 的 TLS、代理信任与日志脱敏。
 
+### 生成并发与长音频升级检查
+
+- 保持单进程，不要增加 uvicorn worker 数，也不要同时启动 CLI worker 使用同一 `data/`。
+- `WORKER_TEXT_CONCURRENCY=2`、`LLM_MAX_CONCURRENCY=6` 为默认；遇到模型端限流先降低 LLM 预算，不缩短长文请求超时。TTS 固定 `TTS_MAX_CONCURRENCY=1`。
+- 检查现有 `.env` 的 `QUALITY_MAX_MINUTES`：旧模板是 22，40 分钟功能应配置为 45。新模板不会覆盖已有 `.env`。
+- 重启后对已有误报音频调用带用户认证的 `POST /api/episodes/{id}/audio/recheck`，随后查询 job。此操作不重新生成音频，也不收取 TTS/LLM 费用；仍有本地音频分析 CPU 开销。质量范围变化后旧快照在重检前仍保留原结论。
+
 ## 2. 前置要求
 
 | 项 | 要求 | 检查命令 |

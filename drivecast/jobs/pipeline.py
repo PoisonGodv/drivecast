@@ -1,7 +1,7 @@
 """job 编排(docs/02 §2):内容生产全部走 job,web/CLI 只入队不直接生成。
 
 链式:script job 完成 → 自动入队 tts job。整计划 = 每集一个 script job,
-worker 串行消费天然防 edge-tts 限流(docs/03 §3.3)。
+worker 文本/音频分通道，TTS 请求严格单路。
 """
 from __future__ import annotations
 
@@ -154,15 +154,18 @@ async def enqueue_plan_all(plan, user_id: int | None = None) -> list[int]:
     """整计划批量；旧成品缺当前音频元数据时只排本地后处理，不调 LLM/TTS。"""
     from ..config import settings
     from ..tts.service import AUDIO_PIPELINE_VERSION
+    from ..tts.quality import stale
     job_ids = []
     for ep in plan.episodes:
         final = settings.episode_audio_path(ep.episode_id)
         if final.exists() and final.stat().st_size > 0:
             meta_path = settings.meta_path(ep.episode_id)
             pipeline_version = 0
+            meta = {}
             if meta_path.exists():
                 try:
-                    pipeline_version = int(json.loads(meta_path.read_text("utf-8")).get("pipeline_version", 0))
+                    meta = json.loads(meta_path.read_text("utf-8"))
+                    pipeline_version = int(meta.get("pipeline_version", 0))
                 except (OSError, TypeError, ValueError, json.JSONDecodeError):
                     pipeline_version = 0
             if pipeline_version < AUDIO_PIPELINE_VERSION:
@@ -170,6 +173,10 @@ async def enqueue_plan_all(plan, user_id: int | None = None) -> list[int]:
                     "audio_upgrade", ep.episode_id,
                     {"plan_id": plan.plan_id, "seq": ep.seq}, user_id=user_id,
                 ))
+            elif stale(meta):
+                job_ids.append(await enqueue(
+                    "quality_recheck", ep.episode_id,
+                    {"plan_id": plan.plan_id, "seq": ep.seq}, user_id=user_id))
             continue
         job_ids.append(await enqueue_episode(plan.plan_id, ep.seq, ep.episode_id, user_id=user_id))
     return job_ids

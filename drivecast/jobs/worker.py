@@ -1,4 +1,4 @@
-"""asyncio worker(docs/02 §2/§6):串行消费 job 表,状态机推进,重启续跑。
+"""asyncio worker:有界文本通道与单路音频通道，状态机推进、重启续跑。
 
 状态机:pending → running → done/failed/cancelled;attempt < max_attempt 失败自动回 pending。
 启动时把 running 重置为 pending(上次进程死在了半途);常驻期间空轮询时
@@ -29,6 +29,8 @@ _BACKOFF_MAX = 60.0
 
 # 进程内正在运行的 job task 映射:plan_ext_id -> {job_id: task}
 _active_plan_tasks: dict[str, dict[int, asyncio.Task]] = {}
+_claimed_jobs: set[int] = set()
+_shutdown_jobs: set[int] = set()
 
 
 def register_running_job(plan_ext_id: str, job_id: int, task: asyncio.Task) -> None:
@@ -121,6 +123,7 @@ async def _reset_stale_running() -> int:
             .where(
                 Job.status == "running",
                 Job.updated_at < threshold,
+                Job.id.not_in(_claimed_jobs | {j for bucket in _active_plan_tasks.values() for j, t in bucket.items() if not t.done()}),
                 Job.ref_id.in_(ref_ids),
             )
             .values(status="pending", updated_at=_now_text())
@@ -156,21 +159,45 @@ async def _recover_stuck_generating() -> int:
         return len(stuck)
 
 
-async def _next_pending() -> Job | None:
+async def _next_pending(kinds=None, busy_plans=()) -> Job | None:
+    """有空闲执行名额才认领；同计划文本有序，不占着名额等待依赖。"""
     async with session() as s:
-        row = await s.scalar(
-            select(Job).where(Job.status == "pending").order_by(Job.id).limit(1)
-        )
-        if row is None:
-            return None
-        result = await s.execute(
-            update(Job).where(Job.id == row.id, Job.status == "pending")
-            .values(status="running", attempt=Job.attempt + 1, updated_at=_now_text())
-        )
-        await s.commit()
-        if result.rowcount == 0:
-            return None
-        return row
+        query = select(Job).where(Job.status == "pending")
+        if kinds is not None:
+            query = query.where(Job.kind.in_(kinds))
+        rows = list((await s.scalars(query.order_by(Job.id))).all())
+        rows.sort(key=lambda j: (json.loads(j.payload).get("plan_id", ""),
+                                 int(json.loads(j.payload).get("seq", 0)), j.id))
+        # 跨计划仍按最早排队顺序公平选择。
+        first_by_plan = {}
+        for row in rows:
+            plan_id = json.loads(row.payload).get("plan_id", "")
+            if plan_id not in busy_plans:
+                first_by_plan.setdefault(plan_id, row)
+        for row in sorted(first_by_plan.values(), key=lambda j: j.id):
+            if row.kind == "script":
+                payload = json.loads(row.payload)
+                previous = list((await s.scalars(select(Job).where(
+                    Job.kind == "script", Job.id != row.id,
+                    Job.status.in_(("pending", "running", "failed"))))).all())
+                blockers = [j for j in previous
+                            if json.loads(j.payload).get("plan_id") == payload.get("plan_id")
+                            and int(json.loads(j.payload).get("seq", 0)) < int(payload.get("seq", 0))]
+                if any(j.status in ("pending", "running") for j in blockers):
+                    continue
+                if any(not settings.script_path(j.ref_id).exists() for j in blockers):
+                    await s.execute(update(Job).where(Job.id == row.id, Job.status == "pending")
+                                    .values(status="failed", error="上集脚本未完成，无法生成回顾", updated_at=_now_text()))
+                    await s.commit()
+                    await set_episode_status(row.ref_id, "failed")
+                    continue
+            result = await s.execute(
+                update(Job).where(Job.id == row.id, Job.status == "pending")
+                .values(status="running", attempt=Job.attempt + 1, updated_at=_now_text()))
+            await s.commit()
+            if result.rowcount:
+                return row
+        return None
 
 
 async def _finish(job_id: int, status: str, error: str = "") -> bool:
@@ -212,7 +239,7 @@ async def _retry_or_fail(job: Job, exc: BaseException) -> None:
             if job.kind == "plan":
                 # 大纲生成彻底失败:占位计划转 failed,前端可见可删除重建
                 await set_plan_status_by_ext(job.ref_id, "failed")
-            else:
+            elif job.kind not in ("quality_recheck", "audio_upgrade"):
                 await set_episode_status(job.ref_id, "failed")
             print(f"[worker] job#{job.id} {job.kind}/{job.ref_id} 失败(已达{job.max_attempt}次): {err[:120]}")
             traceback.print_exception(exc)
@@ -226,7 +253,14 @@ async def _run_plan_job(job: Job) -> None:
     payload = json.loads(job.payload)
     plan_ext_id = payload["plan_id"]
     if not await _plan_generating(plan_ext_id):
-        await _finish(job.id, "cancelled", "plan not generating")
+        # 大纲已落库但链式入队中断：幂等补齐，不重新请求 LLM。
+        if await _plan_alive(plan_ext_id):
+            from .pipeline import enqueue_plan_all
+            plan_rec = planner.load_plan(plan_ext_id)
+            await enqueue_plan_all(plan_rec, user_id=job.user_id)
+            await _finish(job.id, "done")
+        else:
+            await _finish(job.id, "cancelled", "plan not generating")
         return
     plan_rec = await planner.create_plan(
         payload["topic"], direction=payload["direction"],
@@ -285,7 +319,15 @@ async def _run_audio_upgrade_job(job: Job) -> None:
     ]
     if not chunks or missing:
         raise RuntimeError(f"{job.ref_id} 既有 chunk 不完整:{missing or 'empty'}")
-    await tts.synthesize_episode(script, album=plan.title)
+    await tts.synthesize_episode(script, album=plan.title, local_only=True)
+    await _finish(job.id, "done")
+
+
+async def _run_quality_recheck_job(job: Job) -> None:
+    payload = json.loads(job.payload)
+    script = scriptwriter.load_script(job.ref_id) or {
+        "episode_id": job.ref_id, "plan_id": payload["plan_id"]}
+    await tts.recheck_quality(script)
     await _finish(job.id, "done")
 
 
@@ -294,6 +336,7 @@ _EXECUTORS = {
     "script": _run_script_job,
     "tts": _run_tts_job,
     "audio_upgrade": _run_audio_upgrade_job,
+    "quality_recheck": _run_quality_recheck_job,
 }
 
 
@@ -303,7 +346,13 @@ async def _execute_job_task(job: Job, plan_ext_id: str) -> None:
         print(f"[worker] job#{job.id} 完成")
     except asyncio.CancelledError:
         print(f"[worker] job#{job.id} 收到取消信号")
-        await _finish(job.id, "cancelled", "job cancelled")
+        if job.id in _shutdown_jobs and await _plan_alive(plan_ext_id):
+            async with session() as s:
+                await s.execute(update(Job).where(Job.id == job.id, Job.status == "running")
+                                .values(status="pending", attempt=Job.attempt - 1, updated_at=_now_text()))
+                await s.commit()
+        else:
+            await _finish(job.id, "cancelled", "job cancelled")
         raise
     except Exception as exc:  # noqa: BLE001
         await _retry_or_fail(job, exc)
@@ -327,6 +376,7 @@ async def _execute_one(job: Job) -> None:
         child_task = asyncio.create_task(_execute_job_task(job, plan_ext_id))
         register_running_job(plan_ext_id, job.id, child_task)
 
+    started = time.monotonic()
     try:
         await child_task
     except asyncio.CancelledError:
@@ -339,67 +389,80 @@ async def _execute_one(job: Job) -> None:
         pass
     finally:
         unregister_running_job(plan_ext_id, job.id, child_task)
+        print(f"[worker] job#{job.id} {job.kind} 耗时 {time.monotonic() - started:.1f}s")
 
 
-async def run_until_empty() -> None:
-    """串行消费直到队列清空(CLI/批处理模式)。"""
-    orphans = await _rescan_orphans()
-    if orphans:
-        print(f"[worker] 恢复 {orphans} 个中断 job(running→pending)")
-    stuck = await _recover_stuck_generating()
-    if stuck:
-        print(f"[worker] {stuck} 个生成中计划无在途 plan job,标记 failed")
-    while True:
-        job = await _next_pending()
-        if job is None:
-            break
-        await _execute_one(job)
-        await asyncio.sleep(settings.worker_poll_interval_sec)  # 串行+间隔,防限流(docs/03 §3.3)
-    await close_db()
-    print("[worker] 队列已清空")
-
-
-async def run_forever() -> None:
-    """常驻 worker:跑完队列不退出,继续 poll;Web lifespan 负责启动与取消(docs/05 M3)。
-
-    消费循环自带兜底:DB 抖动(database is locked 等)只退避重试,绝不穿出 while——
-    task 一旦静默死亡,enqueue 的幂等去重会命中残留 pending/running job 拦住重试,
-    UI 将永久停留"排队中"且无任何日志(docs/06 §10 实故障形态)。
-    """
-    orphans = await _rescan_orphans()
-    if orphans:
-        print(f"[worker] 恢复 {orphans} 个中断 job(running→pending)")
-    stuck = await _recover_stuck_generating()
-    if stuck:
-        print(f"[worker] {stuck} 个生成中计划无在途 plan job,标记 failed")
+async def _dispatch(*, forever: bool) -> None:
+    await _rescan_orphans()
+    await _recover_stuck_generating()
+    active: dict[asyncio.Task, tuple[Job, str]] = {}
     last_stale_check = time.monotonic()
     backoff = _BACKOFF_INITIAL
     try:
         while True:
             try:
-                job = await _next_pending()
-                if job is None:
-                    now = time.monotonic()
-                    if now - last_stale_check >= _STALE_CHECK_INTERVAL:
-                        last_stale_check = now
-                        stale = await _reset_stale_running()
-                        if stale:
-                            print(f"[worker] 复位 {stale} 个超时 running job(→pending)")
+                for task in list(active):
+                    if task.done():
+                        job, _ = active.pop(task)
+                        _claimed_jobs.discard(job.id)
+                        if not task.cancelled():
+                            task.result()
+                for lane, kinds, capacity in (
+                    ("text", ("plan", "script"), settings.worker_text_concurrency),
+                    ("audio", ("tts", "audio_upgrade", "quality_recheck"), 1),
+                ):
+                    while sum(l == lane for _, l in active.values()) < capacity:
+                        busy = {json.loads(j.payload).get("plan_id", "")
+                                for j, l in active.values() if l == lane}
+                        job = await _next_pending(kinds, busy)
+                        if job is None:
+                            break
+                        _claimed_jobs.add(job.id)
+                        task = asyncio.create_task(_execute_one(job))
+                        active[task] = (job, lane)
+                if time.monotonic() - last_stale_check >= _STALE_CHECK_INTERVAL:
+                    await _reset_stale_running()
+                    last_stale_check = time.monotonic()
+                if not active and not forever:
+                    async with session() as s:
+                        pending = await s.scalar(select(Job.id).where(Job.status == "pending").limit(1))
+                    if pending is None:
+                        break
+                backoff = _BACKOFF_INITIAL
+                if active:
+                    await asyncio.wait(active, timeout=settings.worker_poll_interval_sec,
+                                       return_when=asyncio.FIRST_COMPLETED)
+                else:
                     await asyncio.sleep(settings.worker_poll_interval_sec)
-                    continue
-                await _execute_one(job)
-                backoff = _BACKOFF_INITIAL  # 正常推进则重置退避
-                await asyncio.sleep(settings.worker_poll_interval_sec)
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 traceback.print_exception(exc)
-                print(
-                    f"[worker] 消费循环异常({type(exc).__name__}: {exc}),"
-                    f"退避 {backoff:.0f}s 后继续"
-                )
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, _BACKOFF_MAX)
-    except asyncio.CancelledError:
-        print("[worker] 收到取消信号,优雅退出")
-        raise
+    finally:
+        jobs = [j for j, _ in active.values()]
+        _shutdown_jobs.update(j.id for j in jobs)
+        for task in active:
+            task.cancel()
+        await asyncio.gather(*active, return_exceptions=True)
+        # 认领后尚未进入 child 的任务也需恢复；删除栅栏的 cancelled 不可覆盖。
+        for job in jobs:
+            if await _plan_alive(json.loads(job.payload).get("plan_id", "")):
+                async with session() as s:
+                    await s.execute(update(Job).where(Job.id == job.id, Job.status == "running")
+                                    .values(status="pending", attempt=Job.attempt - 1, updated_at=_now_text()))
+                    await s.commit()
+            _claimed_jobs.discard(job.id)
+            _shutdown_jobs.discard(job.id)
+
+
+async def run_until_empty() -> None:
+    try:
+        await _dispatch(forever=False)
+    finally:
+        await close_db()
+
+
+async def run_forever() -> None:
+    await _dispatch(forever=True)

@@ -126,6 +126,7 @@ def _check_passed(checks: dict[str, Any], *names: str) -> bool | None:
 
 
 def _quality(meta: dict[str, Any], duration_sec: float) -> dict[str, Any]:
+    from ..tts.quality import stale
     raw = meta.get("quality")
     quality = dict(raw) if isinstance(raw, dict) else {}
     checks = quality.get("checks") if isinstance(quality.get("checks"), dict) else {}
@@ -134,7 +135,8 @@ def _quality(meta: dict[str, Any], duration_sec: float) -> dict[str, Any]:
     if duration_ok is None and isinstance(quality.get("duration_ok"), bool):
         duration_ok = quality["duration_ok"]
     if duration_ok is None and duration_sec > 0:
-        duration_ok = 8 * 60 <= duration_sec <= 22 * 60
+        from ..tts.quality import duration_check
+        duration_ok = duration_check(duration_sec)["passed"]
 
     clipping_ok = _check_passed(checks, "peak", "clipping")
     if clipping_ok is None and isinstance(quality.get("clipping_ok"), bool):
@@ -151,7 +153,7 @@ def _quality(meta: dict[str, Any], duration_sec: float) -> dict[str, Any]:
     chunk_count = meta.get("chunk_count")
     expected_chunks = chunk_check.get("expected", quality.get("expected_chunk_count",
                                                                 meta.get("expected_chunk_count")))
-    if chunks_ok is None and isinstance(chunk_count, int) and isinstance(expected_chunks, int):
+    if chunks_ok is None and "passed" not in chunk_check and isinstance(chunk_count, int) and isinstance(expected_chunks, int):
         chunks_ok = chunk_count == expected_chunks
 
     normalized_checks = {
@@ -178,20 +180,17 @@ def _quality(meta: dict[str, Any], duration_sec: float) -> dict[str, Any]:
     if not isinstance(failed_checks, list):
         failed_checks = []
     # 旧 meta 可能只列 failed_checks 而没有顶层 status；不能同时显示“通过”和告警。
-    if failed_checks and status in {"passed", "unknown"}:
+    if (failed_checks or any(v is False for v in known)) and status in {"passed", "unknown"}:
         status = "warning"
-    labels = {
-        "duration_range": "音频时长不在 8–22 分钟范围内",
-        "target_duration_error": "实际时长与目标时长误差超过阈值",
-        "peak": "峰值过高，可能存在削波",
-        "chunks": "音频分段数量或时长存在异常",
-    }
     if not messages:
-        messages = [labels.get(str(name), str(name)) for name in failed_checks]
+        from ..tts.quality import message
+        messages = [message(str(name), checks) for name in failed_checks]
 
     return {
         "status": status,
         "checks": normalized_checks,
+        "details": checks,
+        "recheck_recommended": stale(meta),
         "failed_checks": [str(name) for name in failed_checks],
         "max_volume_db": max_volume_db,
         "chunk_count": chunk_count if isinstance(chunk_count, int) else None,

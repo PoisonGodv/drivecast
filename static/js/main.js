@@ -22,7 +22,7 @@ const DIRECTIONS = [
 
 const STATUS_LABELS = {
   pending: '排队中',
-  scripted: '写脚本中',
+  scripted: '脚本已完成，等待音频',
   tts_ready: '待合成',
   synth_partial: '合成中',
   ready: '可播放',
@@ -481,7 +481,8 @@ const appState = reactive({
   /* 勘误重生成(docs/07 §5):旧产物自动备份,确认时填写原因入勘误史 */
   async regenerateEpisode(id) {
     const session = getSession()
-    const reason = window.prompt('重新生成本集,原因(记入勘误历史,可留空):') ?? ''
+    const reason = window.prompt('重新生成本集,原因(记入勘误历史,可留空):')
+    if (reason === null) return
     try {
       await api.regenerateEpisode(id, reason.trim())
       if (!isCurrentSession(session)) return

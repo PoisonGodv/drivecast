@@ -94,6 +94,22 @@ class WebContractsTest(unittest.TestCase):
             ])
             await s.commit()
 
+    def test_recheck_enqueues_without_modifying_audio(self) -> None:
+        before = self.audio_path.read_bytes()
+        response = self.client.post(f"/api/episodes/1/audio/recheck")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.audio_path.read_bytes(), before)
+        job = self.client.get(f"/api/jobs/{response.json()['job_id']}").json()
+        self.assertEqual(job["kind"], "quality_recheck")
+
+    def test_regenerate_conflict_does_not_move_files(self) -> None:
+        response = self.client.post(f"/api/episodes/1/audio/recheck")
+        self.assertEqual(response.status_code, 200)
+        before = self.audio_path.read_bytes()
+        response = self.client.post(f"/api/episodes/1/regenerate", json={"reason": "test"})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.audio_path.read_bytes(), before)
+
     def test_review_contracts_expose_numeric_plan_id(self) -> None:
         today = self.client.get("/api/review/today")
         self.assertEqual(today.status_code, 200)

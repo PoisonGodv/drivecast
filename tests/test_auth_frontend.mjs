@@ -446,3 +446,17 @@ test('same-episode late metadata and transcript stay discarded after account swi
   assert.deepEqual(plain(b.playerModule.player.state.chapters), [{ start_sec: 12 }])
   b.app.logout()
 })
+
+
+test('cancel regenerate sends no request while confirmed empty reason is allowed', async () => {
+  const b = await browser()
+  b.login()
+  b.window.prompt = () => null
+  await b.app.regenerateEpisode(9)
+  assert.equal(b.calls.length, 0)
+  b.window.prompt = () => ''
+  b.fetchWith(() => Promise.resolve(response({ episode_id: 9, job_id: 1, status: 'pending' })))
+  await b.app.regenerateEpisode(9)
+  assert.equal(b.calls.length, 1)
+  assert.equal(JSON.parse(b.calls[0].init.body).reason, '')
+})

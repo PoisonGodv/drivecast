@@ -66,7 +66,7 @@ class AudioPipelineUnitTest(unittest.TestCase):
             )
         self.assertEqual(report["status"], "warning")
         self.assertIn("duration_range", report["failed_checks"])
-        self.assertIn("target_duration_error", report["failed_checks"])
+        self.assertIn("estimated_duration_error", report["failed_checks"])
         self.assertIn("peak", report["failed_checks"])
         self.assertTrue(report["checks"]["chunks"]["passed"])
     def test_quality_uses_calibrated_estimate_not_requested_minutes(self) -> None:
@@ -88,8 +88,8 @@ class AudioPipelineUnitTest(unittest.TestCase):
                 paths=paths,
                 durations=[120.0] * 5,
             )
-        self.assertTrue(report["checks"]["target_duration_error"]["passed"])
-        self.assertEqual(report["checks"]["target_duration_error"]["error_pct"], 0.0)
+        self.assertTrue(report["checks"]["estimated_duration_error"]["passed"])
+        self.assertEqual(report["checks"]["estimated_duration_error"]["error_pct"], 0.0)
 
 
 class AudioUpgradeJobTest(unittest.IsolatedAsyncioTestCase):

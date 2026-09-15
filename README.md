@@ -22,6 +22,14 @@
 - **开车友好播放**：Media Session 锁屏控制、±15s 大按钮、倍速、自动连播、进度记忆。
 - **题库复习闭环**：每集自测题自动入库，三态掌握度（陌生/模糊/掌握）+ 简化间隔重复 + 重听联动 + 面试冲刺清单。
 
+## 生成提速与旧音频重检
+
+- 默认 2 路跨计划文本 job、6 路共享 LLM 请求预算；同计划逐集写稿保留回顾依赖。
+- 脚本完成即允许合成，同时准备下一集文本。Edge/豆包 TTS 共用单路锁，不提高 TTS 并发。
+- 质量范围默认 8–45 分钟，分别展示所选目标偏差与文本预测偏差。**旧 `.env` 若有 `QUALITY_MAX_MINUTES=22`，需改为 `45` 并重启**；修改模板不会覆盖现有配置。
+- 已有音频无需重新生成：认证后 `POST /api/episodes/{数字集ID}/audio/recheck` 返回 job ID，通过 `GET /api/jobs/{job_id}` 查询。只更新质量快照，不调用 LLM/TTS、不重编码。GET 元数据中的 `quality.recheck_recommended` 提示规则是否过期。
+- 不同时启动多个 Web worker 或额外 CLI 消费同一目录：请求预算和删除/生成锁限于单进程。
+
 ## 技术栈
 
 Python 3.14 · FastAPI · SQLite(WAL) + SQLAlchemy 2.0 · openai-python（OpenAI 兼容协议，env 切厂商）· edge-tts（可切火山豆包 TTS）· ffmpeg · 无构建前端（原生 ES Module + petite-vue，FastAPI 托管，同源无 CORS）

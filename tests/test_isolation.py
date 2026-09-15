@@ -113,6 +113,7 @@ class IsolationTest(unittest.TestCase):
         cases = [("get", "audio/meta", None), ("get", "audio", None),
                  ("get", "audio/download", None), ("get", "script", None),
                  ("post", "progress", {"position_sec": 5}), ("post", "generate", None),
+                 ("post", "audio/recheck", None),
                  ("post", "regenerate", {"reason": "x"}), ("post", "qc", {"passed": True})]
         for method, suffix, body in cases:
             path = f"/api/episodes/{self.ep_a_id}/{suffix}"

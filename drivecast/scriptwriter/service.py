@@ -227,6 +227,8 @@ def _section_plain(section: ScriptSection, script_format: str) -> str:
 async def _gen_section_checked(plan: PlanRec, ep: EpisodeRec, key: str, target_words: int,
                                **kwargs) -> tuple[ScriptSection, list[Question], int]:
     """单段生成 + 门禁:结构为空或字数落在 0.75-1.25 倍区间外,带修正说明只重出本段一次。"""
+    import time
+    started = time.monotonic()
     section, questions, usage = await _gen_section(plan, ep, key, target_words, **kwargs)
     n = _section_len(section, ep.script_format)
     if n == 0:
@@ -241,6 +243,7 @@ async def _gen_section_checked(plan: PlanRec, ep: EpisodeRec, key: str, target_w
         usage += retry_usage
         if _section_len(retry, ep.script_format) > 0:  # 重出为空则保留首版,不至于开天窗
             section, questions = retry, retry_questions
+    print(f"[script] {ep.episode_id} {key} 完成，耗时 {time.monotonic() - started:.1f}s")
     return section, questions, usage
 
 
@@ -290,7 +293,8 @@ async def _gen_section_split(plan: PlanRec, ep: EpisodeRec, key: str, target_wor
             plain=key == "S4" and index < parts - 1,  # 自测题只由末段产出
             **part_kwargs)
 
-    results = await asyncio.gather(*(_part(i) for i in range(parts)))
+    from ..concurrency import gather_cancel
+    results = await gather_cancel(*(_part(i) for i in range(parts)))
     sections = [r[0] for r in results]
     if ep.script_format == "dialogue":
         merged = ScriptSection(
@@ -320,24 +324,40 @@ async def _gen_sections(plan: PlanRec, ep: EpisodeRec, target_words: int,
 
     # 各段的拆分切片源:S1 按目标知识点,S2 按命中题库问法,S3 按 S2 问法顺序
     s2_scope = [str(q.get("question", "")).strip() for q in s2_questions if q.get("question")]
-    s0, s1, s2 = await asyncio.gather(
-        _gen_section_checked(plan, ep, "S0", targets["S0"],
-                             recap_questions=_recap_questions(plan, ep.seq)),
-        _gen_section_split(plan, ep, "S1", targets["S1"],
-                           scope_items=[str(o) for o in ep.objectives], scope_style="objectives"),
-        _gen_section_split(plan, ep, "S2", targets["S2"],
-                           scope_items=s2_scope, scope_style="questions",
-                           s2_grounding=_s2_grounding_prompt(s2_questions)),
-    )
-    # S3 的答题框架必须对准 S2 抛出的问法;S4 的坑与自测题要扣住 S1/S2 讲过的内容
-    s3 = await _gen_section_split(plan, ep, "S3", targets["S3"], scope_style="order",
-                                  context=_section_plain(s2[0], ep.script_format))
-    s4 = await _gen_section_split(
-        plan, ep, "S4", targets["S4"],
-        context=_section_plain(s1[0], ep.script_format)
-                + "\n\n" + _section_plain(s2[0], ep.script_format))
+    from ..concurrency import gather_cancel
+    tasks = []
 
-    runs = (s0, s1, s2, s3, s4)
+    def start(aw):
+        task = asyncio.create_task(aw)
+        tasks.append(task)
+        return task
+
+    start(_gen_section_checked(
+        plan, ep, "S0", targets["S0"], recap_questions=_recap_questions(plan, ep.seq)))
+    s1_task = start(_gen_section_split(
+        plan, ep, "S1", targets["S1"],
+        scope_items=[str(o) for o in ep.objectives], scope_style="objectives"))
+    s2_task = start(_gen_section_split(
+        plan, ep, "S2", targets["S2"], scope_items=s2_scope, scope_style="questions",
+        s2_grounding=_s2_grounding_prompt(s2_questions)))
+
+    async def gen_s3():
+        s2 = await s2_task
+        return await _gen_section_split(
+            plan, ep, "S3", targets["S3"], scope_style="order",
+            context=_section_plain(s2[0], ep.script_format))
+
+    async def gen_s4():
+        s1, s2 = await gather_cancel(s1_task, s2_task)
+        return await _gen_section_split(
+            plan, ep, "S4", targets["S4"],
+            context=_section_plain(s1[0], ep.script_format)
+                    + "\n\n" + _section_plain(s2[0], ep.script_format))
+
+    start(gen_s3())
+    start(gen_s4())
+    runs = await gather_cancel(*tasks)
+    s4 = runs[4]
     out = ScriptOut(
         sections=[run[0] for run in runs],
         questions=s4[1],  # 自测题由 S4 agent 随段产出
@@ -374,14 +394,8 @@ def _references_outro(references: list[dict]) -> str:
     return f"本期内容参考了以下资料:{spoken}。{closer}"
 
 
-async def write_script(plan: PlanRec, ep: EpisodeRec, *, force: bool = False) -> dict:
-    """生成单集脚本。幂等:已有脚本且非 force 则直接返回(docs/02 §6 episode 级幂等)。"""
-    existing = load_script(ep.episode_id)
-    if existing and not force:
-        return existing
-
+async def _write_script_with_refs(plan: PlanRec, ep: EpisodeRec, matched: list[dict], refs_task) -> dict:
     target_words = ep.target_minutes * settings.words_per_minute
-    matched = _match_questions(plan, ep)  # grounding 与审稿选卡共用一次匹配
     out = await _gen_sections(plan, ep, target_words, matched)
 
     # 质量校验:整集字数明显缩水时告警(分段门禁已在各段内做过一轮修正重出)
@@ -406,22 +420,15 @@ async def write_script(plan: PlanRec, ep: EpisodeRec, *, force: bool = False) ->
         "questions": [q.model_dump() for q in questions],
         "char_count": n_chars,
         "target_words": target_words,
+        "target_minutes": ep.target_minutes,
+        "words_per_minute_at_generation": settings.words_per_minute,
         "usage_tokens": getattr(out, "_usage", 0),
         "status": "scripted",
     }
 
-    # 集级参考链接:生成时实时猎取(搜索 API → LLM 提名 → 题库静态 refs,统一存活校验),
-    # 与事实审稿并行(hunter 永不抛异常;审稿 block 会让整轮作废,参考链接一并丢弃无妨)
-    keywords = sorted({str(t) for q in matched for t in q.get("topic", []) if t})
-    cards = get_fact_cards(keywords)[:3]
     if settings.reviewer_enabled:
-        review, references = await asyncio.gather(
-            _review(data, ep, matched),  # 拦在落盘前,block 则本轮作废
-            hunter.hunt_references(plan, ep, matched, cards),
-        )
-        data["review"] = review
-    else:
-        references = await hunter.hunt_references(plan, ep, matched, cards)
+        data["review"] = await _review(data, ep, matched)
+    references = await refs_task
     data["references"] = references  # 供复习卡片/脚本页读原文;旧脚本无此字段,读取处用 .get
 
     # 片尾参考文献口播(docs/03 §2):拼进文稿末尾(展示与音频一致),TTS 落成 S5 章节;
@@ -439,6 +446,21 @@ async def write_script(plan: PlanRec, ep: EpisodeRec, *, force: bool = False) ->
     _wipe_derived(ep.episode_id)  # 脚本变了,下游产物全部作废
     await upsert_script(ep.episode_id, data)  # 双写 DB:script + question(docs/05 M2-5)
     return data
+
+
+async def write_script(plan: PlanRec, ep: EpisodeRec, *, force: bool = False) -> dict:
+    """先并行猎取引用，正文通过审稿后才保存；失败回收所有请求。"""
+    existing = load_script(ep.episode_id)
+    if existing and not force:
+        return existing
+    from ..concurrency import gather_cancel
+    matched = _match_questions(plan, ep)
+    keywords = sorted({str(t) for q in matched for t in q.get("topic", []) if t})
+    cards = get_fact_cards(keywords)[:3]
+    refs_task = asyncio.create_task(hunter.hunt_references(plan, ep, matched, cards))
+    result, _ = await gather_cancel(
+        _write_script_with_refs(plan, ep, matched, refs_task), refs_task)
+    return result
 
 
 def _wipe_derived(episode_id: str) -> None:

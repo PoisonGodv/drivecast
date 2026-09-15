@@ -18,11 +18,9 @@ from pathlib import Path
 import httpx
 
 from ..config import settings
+from ..concurrency import request_limit
 
 STATUS_OK = 20000000  # code=20000000 音频合成结束的成功状态码
-
-# 全局信号量:与 edge 通道同规格,多集共用一个(docs/03 §3.3)
-_sem: asyncio.Semaphore | None = None
 
 
 class DoubaoTTSError(RuntimeError):
@@ -132,10 +130,7 @@ async def _synthesize_once(
 
 
 def _get_sem() -> asyncio.Semaphore:
-    global _sem
-    if _sem is None:
-        _sem = asyncio.Semaphore(settings.tts_max_concurrency)
-    return _sem
+    return request_limit("tts")
 
 
 async def synth_chunk(text: str, voice: str, rate: str | int, out_path: Path) -> None:

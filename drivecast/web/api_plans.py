@@ -16,7 +16,8 @@ from ..db import session
 from ..jobs import pipeline
 from ..library import artifacts
 from ..library import service as library_service
-from ..models import Job, Plan, Script, Topic, User
+from ..config import settings
+from ..models import Episode, Job, Plan, Script, Topic, User
 from ..persist import (
     finalize_plan_deletion,
     set_episode_status,
@@ -261,8 +262,9 @@ async def generate_episode(episode_id: int, user: User = Depends(get_current_use
     plan = await library_service.get_plan_by_id(ep.plan_id, user_id=user.id)
     if plan is None:
         raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
-    await _assert_plan_active(plan)
-    job_id = await pipeline.enqueue_episode(plan.ext_id, ep.seq, ep.ext_id, user_id=user.id)
+    async with pipeline.get_plan_lifecycle_lock(plan.ext_id):
+        await _assert_plan_active(plan)
+        job_id = await pipeline.enqueue_episode(plan.ext_id, ep.seq, ep.ext_id, user_id=user.id)
     return {"episode_id": episode_id, "job_id": job_id, "status": "pending"}
 
 
@@ -272,9 +274,10 @@ async def generate_plan_all(plan_id: int, user: User = Depends(get_current_user)
     plan_row = await library_service.get_plan_by_id(plan_id, user_id=user.id)
     if plan_row is None:
         raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
-    await _assert_plan_active(plan_row)
-    plan_rec = planner.load_plan(plan_row.ext_id)
-    job_ids = await pipeline.enqueue_plan_all(plan_rec, user_id=user.id)
+    async with pipeline.get_plan_lifecycle_lock(plan_row.ext_id):
+        await _assert_plan_active(plan_row)
+        plan_rec = planner.load_plan(plan_row.ext_id)
+        job_ids = await pipeline.enqueue_plan_all(plan_rec, user_id=user.id)
     status = "pending" if job_ids else "done"
     return {
         "plan_id": plan_id,
@@ -313,12 +316,44 @@ async def regenerate_episode(
         raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
     await _assert_plan_active(plan)
 
-    reason = (body.reason if body else "").strip()
-    if reason:
-        artifacts.append_errata(ep.ext_id, reason)
-    artifacts.backup_artifacts(ep.ext_id)
-    await set_episode_status(ep.ext_id, "pending")
-    job_id = await pipeline.enqueue_episode(plan.ext_id, ep.seq, ep.ext_id, user_id=user.id)
+    async with pipeline.get_plan_lifecycle_lock(plan.ext_id):
+        fresh = await library_service.get_plan_by_id(ep.plan_id, user_id=user.id)
+        if fresh is None:
+            raise HTTPException(status_code=404, detail="plan not found")
+        await _assert_plan_active(fresh)
+        async with session() as s:
+            refs = (await s.scalars(select(Episode.ext_id).where(Episode.plan_id == ep.plan_id))).all()
+            busy = await s.scalar(select(Job.id).where(
+                Job.ref_id.in_([plan.ext_id, *refs]), Job.status.in_(("pending", "running"))).limit(1))
+        if busy is not None:
+            raise HTTPException(status_code=409, detail="计划仍有生成任务，请完成后再重新生成")
+        reason = (body.reason if body else "").strip()
+        if reason:
+            artifacts.append_errata(ep.ext_id, reason)
+        artifacts.backup_artifacts(ep.ext_id)
+        await set_episode_status(ep.ext_id, "pending")
+        job_id = await pipeline.enqueue_episode(plan.ext_id, ep.seq, ep.ext_id, user_id=user.id)
+    return {"episode_id": episode_id, "job_id": job_id, "status": "pending"}
+
+
+@router.post("/episodes/{episode_id}/audio/recheck", response_model=EpisodeGenerateOut)
+async def recheck_episode_audio(episode_id: int, user: User = Depends(get_current_user)) -> dict:
+    """已有音频只重检，不重新生成脚本或语音。"""
+    ep = await library_service.get_episode(episode_id, user_id=user.id)
+    if ep is None:
+        raise HTTPException(status_code=404, detail="episode not found")
+    plan = await library_service.get_plan_by_id(ep.plan_id, user_id=user.id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="plan not found")
+    async with pipeline.get_plan_lifecycle_lock(plan.ext_id):
+        fresh = await library_service.get_plan_by_id(ep.plan_id, user_id=user.id)
+        if fresh is None:
+            raise HTTPException(status_code=404, detail="plan not found")
+        await _assert_plan_active(fresh)
+        if not settings.episode_audio_path(ep.ext_id).is_file():
+            raise HTTPException(status_code=409, detail="无成品音频可重检")
+        job_id = await pipeline.enqueue("quality_recheck", ep.ext_id,
+                                       {"plan_id": plan.ext_id, "seq": ep.seq}, user_id=user.id)
     return {"episode_id": episode_id, "job_id": job_id, "status": "pending"}
 
 

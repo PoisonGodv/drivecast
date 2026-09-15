@@ -8,16 +8,11 @@ from pathlib import Path
 import edge_tts
 
 from ..config import settings
-
-# 全局信号量:多集共用,不是每集一个(docs/03 §3.3)
-_sem: asyncio.Semaphore | None = None
+from ..concurrency import request_limit
 
 
 def _get_sem() -> asyncio.Semaphore:
-    global _sem
-    if _sem is None:
-        _sem = asyncio.Semaphore(settings.tts_max_concurrency)
-    return _sem
+    return request_limit("tts")
 
 
 async def synth_chunk(text: str, voice: str, rate: str, out_path: Path) -> None:

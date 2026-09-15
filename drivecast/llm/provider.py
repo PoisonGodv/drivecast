@@ -116,7 +116,9 @@ class OpenAICompatProvider:
                     await stream.close()  # AsyncStream.close 是协程;看门狗打断后必须关流防泄漏
                 return LLMResult(content="".join(parts), usage_tokens=usage, model=self.model)
 
-            return await asyncio.wait_for(_raw(), timeout=self.timeout)
+            from ..concurrency import request_limit
+            async with request_limit("llm"):
+                return await asyncio.wait_for(_raw(), timeout=self.timeout)
 
         return await with_retry(_call, max_attempts=settings.llm_max_retries, what="llm-chat")
 

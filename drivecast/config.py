@@ -5,6 +5,7 @@
 """
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -24,6 +25,8 @@ class Settings(BaseSettings):
     llm_timeout: int = 900
     llm_idle_timeout: int = 120     # 流式空闲看门狗:N 秒收不到 chunk 才视为连接挂死
     llm_max_retries: int = 3
+    llm_max_concurrency: int = Field(default=6, ge=1, le=32)
+    worker_text_concurrency: int = Field(default=2, ge=1, le=8)
     reviewer_enabled: bool = True   # 脚本事实审稿(docs/07 §3.1);REVIEWER_ENABLED=false 可关省一次 LLM 调用
 
     # ---- TTS(docs/03 §3)----
@@ -33,7 +36,7 @@ class Settings(BaseSettings):
     tts_rate_expert: str = "-5%"                  # 车载基调略减速
     tts_rate_host: str = "+2%"
     tts_pitch: str = "+0Hz"
-    tts_max_concurrency: int = 1                  # M1 串行;上限 3
+    tts_max_concurrency: int = Field(default=1, ge=1, le=1)  # 同进程所有通道严格单路
     tts_chunk_max_retries: int = 5
     # 豆包语音合成 seed-tts-2.0(docs/03 §3.5);TTS_PROVIDER=doubao 时生效
     tts_doubao_api_key: str = ""                  # 新版控制台 API Key(X-Api-Key),一个 key 即可
