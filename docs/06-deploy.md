@@ -59,6 +59,20 @@ sudo dnf install -y epel-release && sudo dnf install -y ffmpeg
 
 ### 步骤 3 · 建 venv 装依赖
 
+#### Python 3.14 安装
+
+系统自带 Python 低于 3.13 时，用 [uv](https://docs.astral.sh/uv/) 装独立解释器（不动系统 Python）：
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # 或 pipx install uv
+uv python install 3.14
+cd /opt/drivecast
+uv venv --python 3.14 --seed .venv   # --seed 带上 pip，后续命令统一用 .venv/bin/pip
+.venv/bin/python --version           # Python 3.14.x
+```
+
+已有 `.venv` 就跳过下面的 `python3 -m venv`。
+
 ```bash
 cd /opt/drivecast
 python3 -m venv .venv
@@ -120,11 +134,10 @@ chmod 600 .env
 ### 步骤 7 · 跑测试（可选但建议）
 
 ```bash
-.venv/bin/pip install pytest
-.venv/bin/python -m pytest -q
+scripts/ci.sh   # 装 requirements.lock + requirements-dev.txt，跑 pytest 与前端测试（需 node）
 ```
 
-**验收**：末行 `N passed`、无 failed。测试数据库/文件使用临时目录，业务 API 测试显式配置真实认证 fixture，不依赖 pytest autouse 桩。不要用 `unittest discover` 验收——它收集不到 `test_auth_bootstrap.py` 等 pytest 风格用例，会漏掉迁移与账号引导路径。
+**验收**：末行 `[ci] 全部通过`。只想跑 Python 测试：`.venv/bin/pip install -r requirements-dev.txt && .venv/bin/python -m pytest -q`，末行 `N passed`、无 failed。其中 `tests/test_e2e_offline.py` 用假 LLM/TTS 走完 创建主题→计划→worker→音频/脚本接口 全链路，不产生任何 API 费用；缺 ffmpeg 时自动跳过。测试数据库/文件使用临时目录，业务 API 测试显式配置真实认证 fixture，不依赖 pytest autouse 桩。不要用 `unittest discover` 验收——它收集不到 `test_auth_bootstrap.py` 等 pytest 风格用例，会漏掉迁移与账号引导路径。
 
 ### 步骤 8 · 前台试跑
 
@@ -265,3 +278,51 @@ sudo systemctl start drivecast
 | SSE 无推送但页面正常 | 反向代理没关 buffering（§6 已含 `proxy_buffering off`） |
 | `sqlite3.OperationalError: database is locked` | 多进程共写同一 DB；确认只有一个 drivecast 实例在跑 |
 | 音频生成卡 running 不动 | 重启服务（断点续跑幂等，不会重复合成）；仍失败看 journalctl 对应 job 报错 |
+
+## 11. CI 与 pre-push
+
+仓库不绑定任何 CI 平台，统一入口是 `scripts/ci.sh`（bash，失败即非零退出）：
+
+1. 仓库根没有 `.venv` 时用 `$PYTHON`（默认 `python3.14`，其次 `python3`）创建；测试会直接调用 `.venv/bin/alembic`，所以 venv 必须在仓库根。
+2. 安装 `requirements.lock` + `requirements-dev.txt`（已装好可设 `CI_SKIP_INSTALL=1` 跳过）。
+3. `pytest -q`，再 `node --experimental-vm-modules tests/test_auth_frontend.mjs`。
+
+CI 机器需要：Python 3.13+/3.14、ffmpeg（缺失时离线端到端等用例跳过而非失败）、Node 18+。所有测试都在临时目录里跑，不需要 `.env`，也不访问任何 LLM/TTS/搜索服务。
+
+任意 CI 平台只需一个步骤：
+
+```bash
+bash scripts/ci.sh
+```
+
+（GitLab CI 的 `script:`、GitHub Actions 的 `run:`、Jenkins 的 `sh` 均直接填这一行；镜像用带 Python 3.14 的基础镜像并 `apt-get install -y ffmpeg nodejs`。）
+
+本地 pre-push 钩子（推送前自动跑，失败则拒绝推送；`git push --no-verify` 可临时跳过）：
+
+```bash
+printf '#!/bin/sh\nexec env CI_SKIP_INSTALL=1 "$(git rev-parse --show-toplevel)/scripts/ci.sh"\n' > .git/hooks/pre-push
+chmod +x .git/hooks/pre-push
+```
+
+## 12. Docker
+
+仓库根的 `Dockerfile` 基于 `python:3.14-slim` + ffmpeg，以非 root 用户（uid 10001）运行 `python run.py`，默认 `WEB_HOST=0.0.0.0`、`WEB_PORT=8080`；全部状态在卷 `/app/data`。`.dockerignore` 排除了 `.env`、`data/`、`.venv`、`backups/`，镜像内不含任何密钥或用户数据。
+
+```bash
+docker build -t drivecast .
+docker volume create drivecast-data
+# .env 放 LLM_* / TTS_* / AUTH_SECRET 等，只在运行时注入，不要 COPY 进镜像
+docker run -d --name drivecast --restart unless-stopped \
+  --env-file /opt/drivecast/.env \
+  -v drivecast-data:/app/data \
+  -p 127.0.0.1:8080:8080 \
+  --stop-timeout 30 \
+  drivecast
+```
+
+- **必须提供 `AUTH_SECRET`**：容器内监听 `0.0.0.0` 属于非本机地址，没有 `AUTH_SECRET` 时 `run.py` 直接拒绝启动。`--env-file` 或 `-e AUTH_SECRET=...` 均可，推荐前者，避免进 shell 历史。
+- `.env` 里若有 `WEB_HOST=127.0.0.1`，会覆盖镜像默认值，导致容器外访问不到；容器用的 env 文件不要写 `WEB_HOST`。
+- `-p 127.0.0.1:8080:8080` 只把端口暴露到宿主本机，再由 §6 的 HTTPS 反代对外。反代在宿主上时容器看到的来源是 docker 网关地址，`FORWARDED_ALLOW_IPS` 要填这个明确地址（`docker network inspect bridge` 查 Gateway），同样不得用 `*`。
+- 首次启动自动建库到 head；设置账号：`docker exec -it drivecast python -m drivecast reset-password admin`。
+- 备份：`docker exec drivecast python scripts/backup.py --out /tmp/backup --keep 1 && docker cp drivecast:/tmp/backup/. /backup/`（不要把 `--out` 指到 `/app/data` 里，否则下次备份会把旧备份包再打进去）；或停容器后直接备份卷。升级：先备份，`docker build` 新镜像后删旧容器、用同一卷重建。
+- 只跑一个容器实例：同一卷不要被多个容器同时挂载（SQLite 单写者 + 进程内 worker）。
