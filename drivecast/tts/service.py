@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import statistics
 from pathlib import Path
@@ -14,6 +15,8 @@ from pathlib import Path
 from ..config import ensure_data_dirs, settings
 from . import doubao, edge, friendly
 from .chunk import chunk_text
+
+logger = logging.getLogger(__name__)
 
 SILENCE_ROLE_SWITCH_MS = 250
 AUDIO_PIPELINE_VERSION = 7
@@ -229,9 +232,9 @@ async def _synth_missing(ep_id: str, chunks: list[dict], *, local_only: bool = F
     if missing and local_only:
         raise RuntimeError("本地升级缺少有效音频块，未调用 TTS")
     if missing:
-        print(f"[tts] {ep_id}: {len(chunks)} 段,需合成 {len(missing)} 段")
+        logger.info(f"{ep_id}: {len(chunks)} 段,需合成 {len(missing)} 段")
     for index, (chunk, path) in enumerate(missing, 1):
-        print(f"[tts] 合成 {chunk['seq']:03d}/{len(chunks)} ({len(chunk['text'])}字) "
+        logger.info(f"{ep_id} 合成 {chunk['seq']:03d}/{len(chunks)} ({len(chunk['text'])}字) "
               f"[{index}/{len(missing)}]")
         await provider.synth_chunk(chunk["text"], chunk["voice"], chunk["rate"], path)
         if await _probe_duration(path) <= 0:
@@ -366,7 +369,7 @@ async def _concat(
                    f":offset={measured['target_offset']}:linear=true")
         else:
             af2 = af
-            print("[tts] loudnorm 测量值解析失败,退化为单趟动态归一")
+            logger.warning("loudnorm 测量值解析失败,退化为单趟动态归一")
 
         out.parent.mkdir(parents=True, exist_ok=True)
         cmd = [
@@ -584,8 +587,8 @@ async def synthesize_episode(script: dict, *, album: str = "", local_only: bool 
     from ..persist import upsert_audio  # 延迟导入防环
     await upsert_audio(ep_id, meta, voices)
     if quality["status"] != "passed":
-        print(f"[warn] {ep_id} 音频质检告警:{','.join(quality['failed_checks'])}")
-    print(f"[tts] {ep_id} 完成:{duration / 60:.1f} 分钟,{len(chunks)} 段,"
+        logger.warning(f"{ep_id} 音频质检告警:{','.join(quality['failed_checks'])}")
+    logger.info(f"{ep_id} 完成:{duration / 60:.1f} 分钟,{len(chunks)} 段,"
           f"实测语速 {meta['words_per_min']} 字/分,章节 {len(chapters)} 个")
     return meta
 

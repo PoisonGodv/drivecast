@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import httpx
 from pydantic import BaseModel, Field
@@ -20,6 +21,8 @@ from pydantic import BaseModel, Field
 from ..config import settings
 from ..llm.provider import OpenAICompatProvider, get_provider
 from ..schemas import EpisodeRec, PlanRec, Reference
+
+logger = logging.getLogger(__name__)
 
 
 class _RefCandidates(BaseModel):
@@ -188,12 +191,12 @@ async def _verify(refs: list[dict]) -> list[dict]:
 
     network_errors = sum(1 for v in verdicts if v is None)
     if network_errors * 2 > len(verdicts):
-        print(f"[refs] 网络故障 {network_errors}/{len(verdicts)},放弃校验保留全部候选")
+        logger.warning(f"网络故障 {network_errors}/{len(verdicts)},放弃校验保留全部候选")
         return refs
     alive = [r for r, v in zip(refs, verdicts) if v is not False]
     dead = len(refs) - len(alive)
     if dead:
-        print(f"[refs] 校验淘汰 {dead} 条死链")
+        logger.info(f"校验淘汰 {dead} 条死链")
     return alive
 
 
@@ -212,11 +215,11 @@ async def hunt_references(
         try:
             fresh.extend(await _search_web(_search_queries(plan, ep, matched)))
         except Exception as exc:
-            print(f"[refs] {ep.episode_id} 实时搜索失败,跳过: {exc}")
+            logger.warning(f"{ep.episode_id} 实时搜索失败,跳过: {exc}")
         try:
             fresh.extend(await _llm_propose(plan, ep, matched))
         except Exception as exc:
-            print(f"[refs] {ep.episode_id} LLM 提名失败,跳过: {exc}")
+            logger.warning(f"{ep.episode_id} LLM 提名失败,跳过: {exc}")
 
         # 合并:实时搜索 > LLM 提名 > 静态基线;按 url 去重
         merged: list[dict] = []
@@ -234,5 +237,5 @@ async def hunt_references(
         verified = await _verify(merged)
         return verified[: settings.ref_max_results] or baseline[: settings.ref_max_results]
     except Exception as exc:  # 兜底:任何意外都不能击杀了脚本生成
-        print(f"[refs] {ep.episode_id} 参考猎取异常,降级静态基线: {exc}")
+        logger.warning(f"{ep.episode_id} 参考猎取异常,降级静态基线: {exc}")
         return baseline[: settings.ref_max_results]

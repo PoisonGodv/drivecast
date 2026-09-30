@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
-import traceback
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, select, update
 
+from .. import ops
 from ..config import settings
 from ..db import close_db, session
 from ..models import Episode, Job, Plan
@@ -22,6 +23,8 @@ from ..persist import set_episode_status, set_plan_status_by_ext
 from ..planner import service as planner
 from ..scriptwriter import service as scriptwriter
 from ..tts import service as tts
+
+logger = logging.getLogger(__name__)
 
 _STALE_CHECK_INTERVAL = 60.0  # 空轮询时最多每分钟做一次超时 running 复位
 _BACKOFF_INITIAL = 2.0
@@ -229,7 +232,7 @@ async def _retry_or_fail(job: Job, exc: BaseException) -> None:
     if job.attempt < job.max_attempt:
         cas_ok = await _finish(job.id, "pending", err)
         if cas_ok:
-            print(f"[worker] job#{job.id} {job.kind}/{job.ref_id} 第{job.attempt}次失败,回队列重试: {err[:120]}")
+            logger.warning(f"job#{job.id} {job.kind}/{job.ref_id} 第{job.attempt}次失败,回队列重试: {err[:120]}")
     else:
         cas_ok = await _finish(job.id, "failed", err)
         if cas_ok:
@@ -238,8 +241,8 @@ async def _retry_or_fail(job: Job, exc: BaseException) -> None:
                 await set_plan_status_by_ext(job.ref_id, "failed")
             elif job.kind not in ("quality_recheck", "audio_upgrade"):
                 await set_episode_status(job.ref_id, "failed")
-            print(f"[worker] job#{job.id} {job.kind}/{job.ref_id} 失败(已达{job.max_attempt}次): {err[:120]}")
-            traceback.print_exception(exc)
+            logger.error(f"job#{job.id} {job.kind}/{job.ref_id} 失败(已达{job.max_attempt}次): {err[:120]}",
+                         exc_info=exc)
 
 
 async def _run_plan_job(job: Job) -> None:
@@ -281,7 +284,7 @@ async def _run_script_job(job: Job) -> None:
     await scriptwriter.write_script(plan, ep)
     from .pipeline import enqueue
     if not await _plan_alive(plan.plan_id):
-        print(f"[worker] job#{job.id} 所属计划非存活,停止后续入队")
+        logger.info(f"job#{job.id} 所属计划非存活,停止后续入队")
         await _finish(job.id, "cancelled", "plan not active")
         return
     await enqueue("tts", ep.episode_id, {"plan_id": plan.plan_id, "seq": ep.seq}, user_id=job.user_id)
@@ -340,9 +343,9 @@ _EXECUTORS = {
 async def _execute_job_task(job: Job, plan_ext_id: str) -> None:
     try:
         await _EXECUTORS[job.kind](job)
-        print(f"[worker] job#{job.id} 完成")
+        logger.info(f"job#{job.id} 完成")
     except asyncio.CancelledError:
-        print(f"[worker] job#{job.id} 收到取消信号")
+        logger.info(f"job#{job.id} 收到取消信号")
         if job.id in _shutdown_jobs and await _plan_alive(plan_ext_id):
             async with session() as s:
                 await s.execute(update(Job).where(Job.id == job.id, Job.status == "running")
@@ -358,7 +361,7 @@ async def _execute_job_task(job: Job, plan_ext_id: str) -> None:
 async def _execute_one(job: Job) -> None:
     """执行单个 job:包装为独立 child task 并登记,支持被计划删除立即终止。"""
     from .pipeline import get_plan_lifecycle_lock
-    print(f"[worker] 执行 job#{job.id} {job.kind}/{job.ref_id} (第{job.attempt}次)")
+    logger.info(f"执行 job#{job.id} {job.kind}/{job.ref_id} (第{job.attempt}次)")
     payload = json.loads(job.payload)
     plan_ext_id = str(payload.get("plan_id") or "")
     lock = get_plan_lifecycle_lock(plan_ext_id)
@@ -368,7 +371,7 @@ async def _execute_one(job: Job) -> None:
     async with lock:
         if not await _plan_alive(plan_ext_id):
             await _finish(job.id, "cancelled", "plan not active")
-            print(f"[worker] job#{job.id} 所属计划非存活,标记 cancelled 跳过")
+            logger.info(f"job#{job.id} 所属计划非存活,标记 cancelled 跳过")
             return
         child_task = asyncio.create_task(_execute_job_task(job, plan_ext_id))
         register_running_job(plan_ext_id, job.id, child_task)
@@ -386,7 +389,7 @@ async def _execute_one(job: Job) -> None:
         pass
     finally:
         unregister_running_job(plan_ext_id, job.id, child_task)
-        print(f"[worker] job#{job.id} {job.kind} 耗时 {time.monotonic() - started:.1f}s")
+        logger.info(f"job#{job.id} {job.kind} 耗时 {time.monotonic() - started:.1f}s")
 
 
 async def _dispatch(*, forever: bool) -> None:
@@ -394,6 +397,7 @@ async def _dispatch(*, forever: bool) -> None:
     await _recover_stuck_generating()
     active: dict[asyncio.Task, tuple[Job, str]] = {}
     last_stale_check = time.monotonic()
+    last_gc = time.monotonic() - ops.GC_INTERVAL_SEC  # 首次空闲即回收一轮
     backoff = _BACKOFF_INITIAL
     try:
         while True:
@@ -406,8 +410,11 @@ async def _dispatch(*, forever: bool) -> None:
                             task.result()
                 for lane, kinds, capacity in (
                     ("text", ("plan", "script"), settings.worker_text_concurrency),
-                    ("audio", ("tts", "audio_upgrade", "quality_recheck"), 1),
+                    ("audio", ops.AUDIO_KINDS, 1),
                 ):
+                    # 磁盘不足时音频任务必然写盘失败,先不认领(白耗 attempt),空间恢复后自动继续
+                    if lane == "audio" and not ops.disk_ok():
+                        continue
                     while sum(l == lane for _, l in active.values()) < capacity:
                         busy = {json.loads(j.payload).get("plan_id", "")
                                 for j, l in active.values() if l == lane}
@@ -420,6 +427,10 @@ async def _dispatch(*, forever: bool) -> None:
                 if time.monotonic() - last_stale_check >= _STALE_CHECK_INTERVAL:
                     await _reset_stale_running()
                     last_stale_check = time.monotonic()
+                if (forever and not active
+                        and time.monotonic() - last_gc >= ops.GC_INTERVAL_SEC):
+                    last_gc = time.monotonic()
+                    await ops.gc_chunks()
                 if not active and not forever:
                     async with session() as s:
                         pending = await s.scalar(select(Job.id).where(Job.status == "pending").limit(1))
@@ -434,7 +445,7 @@ async def _dispatch(*, forever: bool) -> None:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                traceback.print_exception(exc)
+                logger.error("worker 调度循环异常,退避后重试", exc_info=exc)
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, _BACKOFF_MAX)
     finally:

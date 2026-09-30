@@ -8,6 +8,7 @@
   python -m drivecast dbsync                     # 存量文件产物导入 DB
   python -m drivecast create-user <username>     # 建登录用户(无注册接口)
   python -m drivecast reset-password <username>  # 重置密码(0006 后给 admin 后置密码)
+  python -m drivecast gc [--dry-run]             # 回收过期 audio/chunks(CHUNKS_RETENTION_DAYS)
 """
 from __future__ import annotations
 
@@ -228,7 +229,23 @@ async def cmd_reset_password(args) -> None:
         print("提示:已签发的旧 token 在自然过期前(最长 7 天)仍然有效。")
 
 
+async def cmd_gc(args) -> None:
+    from . import ops
+
+    if settings.chunks_retention_days <= 0:
+        print("CHUNKS_RETENTION_DAYS=0,chunk 回收已关闭")
+        return
+    removed = await ops.gc_chunks(dry_run=args.dry_run)
+    verb = "将回收" if args.dry_run else "已回收"
+    print(f"{verb} {len(removed)} 集的 chunk 目录")
+    for ep_ext_id in removed:
+        print(f"  {ep_ext_id}")
+
+
 def main() -> None:
+    from .logging_setup import setup_logging
+
+    setup_logging()
     ensure_data_dirs()
     p = argparse.ArgumentParser(prog="drivecast", description="通勤技术播客生成器")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -266,11 +283,15 @@ def main() -> None:
     sp = sub.add_parser("list", help="查看计划")
     sp.add_argument("plan_id")
 
+    sp = sub.add_parser("gc", help="回收已就绪且过期的集的音频分片目录")
+    sp.add_argument("--dry-run", action="store_true", help="只列出将回收的集,不删除")
+
     args = p.parse_args()
     commands = {
         "plan": cmd_plan, "script": cmd_script, "tts": cmd_tts, "episode": cmd_episode,
         "generate": cmd_generate, "worker": cmd_worker, "dbsync": cmd_dbsync,
         "list": cmd_list, "create-user": cmd_create_user, "reset-password": cmd_reset_password,
+        "gc": cmd_gc,
     }
 
     async def run_command() -> None:

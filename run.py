@@ -11,6 +11,7 @@ import uvicorn
 
 from drivecast.auth import check_auth_secret_for_host
 from drivecast.config import settings
+from drivecast.logging_setup import setup_logging
 
 
 class _Server(uvicorn.Server):
@@ -32,6 +33,7 @@ class _Server(uvicorn.Server):
 
 
 if __name__ == "__main__":
+    setup_logging()
     try:
         check_auth_secret_for_host(settings.web_host)
     except RuntimeError as exc:
