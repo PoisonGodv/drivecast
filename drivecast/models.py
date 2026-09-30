@@ -28,6 +28,8 @@ class User(Base):
     id: Mapped[int] = _id()
     username: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # JWT 的 ver 须等于此值;改密/重置时自增,吊销该用户此前签发的全部 token
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     created_at: Mapped[str] = _now()
 
 

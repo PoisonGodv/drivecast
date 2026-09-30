@@ -1,7 +1,8 @@
 """认证核心:pbkdf2 密码哈希 + HS256 JWT(PyJWT)+ FastAPI 依赖。
 
 - 密码:hashlib.pbkdf2_hmac(sha256, 600k 迭代, 16B 随机 salt),纯标准库,无 C 依赖。
-- JWT:PyJWT 签发/校验,sub=str(user.id),7 天过期(AUTH_TOKEN_EXPIRE_DAYS)。
+- JWT:PyJWT 签发/校验,sub=str(user.id),ver=user.token_version,7 天过期(AUTH_TOKEN_EXPIRE_DAYS)。
+  改密/重置密码自增 token_version,ver 不符即 401(吊销该用户此前签发的全部 token)。
 - get_current_user 是唯一鉴权入口:Authorization: Bearer 优先;
   仅 GET/HEAD 且路径命中白名单(SSE / <audio> 下载,EventSource/<audio> 无法自定义头)
   时回退 ?token= 查询参数。白名单绝不能放宽到写端点(token 可被 CSRF 式利用)。
@@ -97,25 +98,37 @@ def _auth_secret() -> str:
     return _random_secret
 
 
-def create_token(user_id: int) -> tuple[str, int]:
+def create_token(user_id: int, token_version: int = 0) -> tuple[str, int]:
     """签发 token,返回 (token, expires_in 秒)。"""
     expires_in = settings.auth_token_expire_days * 86400
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
+        "ver": int(token_version),
         "iat": int(now.timestamp()),
         "exp": now + timedelta(seconds=expires_in),
     }
     return jwt.encode(payload, _auth_secret(), algorithm="HS256"), expires_in
 
 
-def decode_token(token: str) -> int | None:
-    """校验并解析 user_id;任何失败(过期/伪造/坏 sub)返回 None。"""
+def decode_claims(token: str) -> tuple[int, int] | None:
+    """校验并解析 (user_id, ver);任何失败(过期/伪造/坏 sub/坏 ver)返回 None。
+
+    无 ver 的旧 token(本功能上线前签发)按 0 处理,升级后不至于全员被踢。
+    """
     try:
         payload = jwt.decode(token, _auth_secret(), algorithms=["HS256"])
-        return int(payload.get("sub"))
+        ver = payload.get("ver", 0)
+        if type(ver) is not int:
+            return None
+        return int(payload.get("sub")), ver
     except (jwt.PyJWTError, TypeError, ValueError):
         return None
+
+
+def decode_token(token: str) -> int | None:
+    claims = decode_claims(token)
+    return claims[0] if claims else None
 
 
 # ---------- FastAPI 依赖 ----------
@@ -139,15 +152,16 @@ def _unauthorized() -> HTTPException:
 
 
 async def get_current_user(request: Request) -> User:
-    """所有受保护 API 的鉴权依赖;按 user_id 现查 DB(不缓存,CLI 改密/删户即时生效)。"""
+    """所有受保护 API 的鉴权依赖;按 user_id 现查 DB(不缓存,改密/删户即时生效)。"""
     token = _extract_token(request)
     if not token:
         raise _unauthorized()
-    user_id = decode_token(token)
-    if user_id is None:
+    claims = decode_claims(token)
+    if claims is None:
         raise _unauthorized()
+    user_id, ver = claims
     async with session() as s:
         user = (await s.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
-    if user is None:
+    if user is None or user.token_version != ver:
         raise _unauthorized()
     return user

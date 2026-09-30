@@ -94,7 +94,7 @@ chmod 600 .env
 .venv/bin/alembic upgrade head
 ```
 
-**验收**：`sqlite3 data/drivecast.db "SELECT version_num FROM alembic_version"` 输出 `0007`。
+**验收**：`sqlite3 data/drivecast.db "SELECT version_num FROM alembic_version"` 输出 `0008`。
 
 升级已有库前必须停 Web/CLI worker 并备份 SQLite（含 WAL 状态，见 §7）和文件。迁移保留历史数据属主 `admin`（ID 1），初始密码为不可登录的锁定占位。新库同样预留该属主，不能用第一个普通用户接管历史数据。若遇到 schema 过旧、部分迁移或 admin/ID 1 冲突，**停止上线**，保留失败库和备份，排查冲突后重试；不要删除 user 表、强行 stamp head、手改归属或跳过校验。
 
@@ -188,7 +188,7 @@ sudo systemctl status drivecast --no-pager     # Active: active (running)
 ## 6. 安全（登录不能替代传输与部署防护）
 
 - 公网必须 HTTPS；推荐后端 `.env` 保持 `WEB_HOST=127.0.0.1`，只由 TLS 反向代理对外。也可仅用 SSH/Tailscale/WireGuard 隧道访问，不开放后端端口。
-- JWT 默认有效期 7 天（`AUTH_TOKEN_EXPIRE_DAYS`）；**重置密码不会撤销已签发 token**，旧 token 到期前仍可能有效。客户端退出只清本地会话。怀疑泄露时需要轮换 `AUTH_SECRET` 并重启以使所有用户的旧 token 失效，再重新登录。
+- JWT 默认有效期 7 天（`AUTH_TOKEN_EXPIRE_DAYS`）；token 携带用户的 `token_version`，**用户在页头「修改密码」自助改密（`POST /api/auth/password`，校验原密码、新密码至少 8 位、与登录同一套失败锁定）或管理员执行 `reset-password` 都会自增该版本，立即吊销该用户此前签发的全部 token**（含音频/SSE URL 中的 `?token=`）；自助改密的当前页会拿到新 token 保持登录。客户端退出只清本地会话，不吊销 token。怀疑签名密钥泄露时需要轮换 `AUTH_SECRET` 并重启以使所有用户的旧 token 失效，再重新登录。
 - 音频流/下载和 SSE 因浏览器接口限制会在白名单 URL 中携带 `?token=`。当前是同一登录 JWT，**不是短期、单资源授权 token**。Uvicorn 日志有应用内脱敏，但 nginx/CDN/WAF/负载均衡及监控采集仍需独立去除 query/token；不得缓存、转发或分享带 token 的链接。
 - 登录限流按 Uvicorn 解析后的 `request.client.host` 工作，业务不自行信任任意 `X-Forwarded-For`。只有明确的代理源 IP 可以解析转发头；不得配置 `FORWARDED_ALLOW_IPS=*`。单机 nginx 可在 systemd 中显式设置 `Environment=FORWARDED_ALLOW_IPS=127.0.0.1`（如果代理实际用 IPv6/容器地址，改为明确地址）。后端不允许被客户端绕过代理直连。
 - 若不使用代理，应关闭代理头解析（例如 `.venv/bin/python -m uvicorn drivecast.web.main:app --host 127.0.0.1 --port 8080 --no-proxy-headers`；lifespan 仍内嵌 worker）。不要启用多个 worker 进程。

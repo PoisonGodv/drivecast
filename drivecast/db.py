@@ -136,11 +136,13 @@ def prepare_migration(sync_conn) -> None:
     for name in sorted(tables - {"usage_event"}):
         actual = {c["name"]: c for c in inspector.get_columns(name)}
         model = Base.metadata.tables[name]
-        required = set(model.columns.keys())
+        # 早于 0008 的 create_all 库没有 token_version,由迁移补列
+        optional = {"token_version"} if name == "user" else set()
+        required = set(model.columns.keys()) - optional
         if name in ownership:
             tenant_flags.append("user_id" in actual)
             required.discard("user_id")
-        if set(actual) - {"user_id"} != required or any(
+        if set(actual) - {"user_id"} - optional != required or any(
             actual[c.name]["type"]._type_affinity != c.type._type_affinity
             or (not c.nullable and not c.primary_key and actual[c.name]["nullable"])
             for c in model.columns if c.name in required
@@ -179,7 +181,7 @@ def _missing_runtime_schema(sync_conn) -> list[str]:
         "audio": {"meta_json", "quality_status"},
         "episode": {"scheduled_date", "covers"},
         "script": {"refs"},
-        "user": {"password_hash"},
+        "user": {"password_hash", "token_version"},
         "topic": {"user_id"},
         "plan": {"user_id"},
         "job": {"user_id"},

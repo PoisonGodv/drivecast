@@ -1,4 +1,4 @@
-"""认证 API:POST /api/auth/login、GET /api/auth/me。
+"""认证 API:POST /api/auth/login、GET /api/auth/me、POST /api/auth/password。
 
 login 是唯一不挂鉴权的业务端点;失败统一 401 模糊文案
 (用户不存在与密码错同文案、同耗时——对 dummy 哈希跑一次 verify)。
@@ -16,9 +16,16 @@ from dataclasses import dataclass
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 
-from ..auth import DUMMY_HASH, create_token, get_current_user, login_ready_usernames, verify_password
+from ..auth import (
+    DUMMY_HASH,
+    create_token,
+    get_current_user,
+    hash_password,
+    login_ready_usernames,
+    verify_password,
+)
 from ..db import session
 from ..models import User
 
@@ -137,7 +144,7 @@ async def login(body: LoginIn, request: Request) -> LoginOut:
         raise HTTPException(
             status_code=401, detail={"code": 401, "message": "用户名或密码错误"}
         )
-    token, expires_in = create_token(user.id)
+    token, expires_in = create_token(user.id, user.token_version)
     return LoginOut(token=token, expires_in=expires_in, user=UserOut(id=user.id, username=user.username))
 
 
@@ -174,3 +181,72 @@ async def auth_status() -> dict:
 @router.get("/me")
 async def me(user: User = Depends(get_current_user)) -> UserOut:
     return UserOut(id=user.id, username=user.username)
+
+
+# ---------- 自助改密 ----------
+
+PASSWORD_MIN_LEN = 8
+
+
+class PasswordChangeIn(BaseModel):
+    old_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(max_length=256)
+
+
+def _bad_request(message: str) -> HTTPException:
+    # 旧密码错不能回 401:前端会把 401 当作登录失效直接踢回登录页
+    return HTTPException(status_code=400, detail={"code": 400, "message": message})
+
+
+@router.post("/password")
+async def change_password(
+    body: PasswordChangeIn, user: User = Depends(get_current_user)
+) -> LoginOut:
+    """校验旧密码后改密并自增 token_version(其它会话全部失效),回发新 token 保持当前会话。"""
+    if len(body.new_password) < PASSWORD_MIN_LEN:
+        raise _bad_request(f"新密码至少 {PASSWORD_MIN_LEN} 位")
+    if body.new_password == body.old_password:
+        raise _bad_request("新密码不能与原密码相同")
+    # 按用户计数而非按 IP:持有被盗 token 者换 IP 也不能无限猜原密码
+    key = f"password|{user.id}"
+    wait = _begin_login(key)
+    if wait > 0:
+        raise HTTPException(
+            status_code=429,
+            detail={"code": 429, "message": "尝试过于频繁,请稍后再试"},
+            headers={"Retry-After": str(max(1, math.ceil(wait)))},
+        )
+    task = asyncio.create_task(_apply_password_change(user, body, key))
+    _login_tasks.add(task)
+    task.add_done_callback(_login_task_done)
+    new_version = await asyncio.shield(task)
+    if new_version is None:
+        raise _bad_request("原密码错误")
+    token, expires_in = create_token(user.id, new_version)
+    return LoginOut(token=token, expires_in=expires_in, user=UserOut(id=user.id, username=user.username))
+
+
+async def _apply_password_change(user: User, body: PasswordChangeIn, key: str) -> int | None:
+    success = False
+    try:
+        if not await asyncio.to_thread(verify_password, body.old_password, user.password_hash):
+            return None
+        success = True  # 原密码已验证;后续并发冲突不计入猜解失败
+        new_hash = await asyncio.to_thread(hash_password, body.new_password)
+        async with session() as s:
+            # 条件更新:并发改密/CLI 重置已抢先自增时本次作废,当前 token 也随之失效
+            result = await s.execute(
+                update(User)
+                .where(User.id == user.id, User.token_version == user.token_version)
+                .values(password_hash=new_hash, token_version=User.token_version + 1)
+            )
+            await s.commit()
+        if result.rowcount != 1:
+            raise HTTPException(
+                status_code=401,
+                detail={"code": 401, "message": "未登录或登录已过期"},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return user.token_version + 1
+    finally:
+        _finish_login(key, success=success)

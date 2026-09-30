@@ -483,3 +483,70 @@ test('create page shows remaining quota and blocks submit when the request excee
   assert.equal(b.app.usage, null)
   assert.equal(b.timers.size, 0)
 })
+
+test('password change validates inline, keeps this tab logged in with the new token and resets old-session work', async () => {
+  const b = await browser()
+  await seed(b)
+  const oldStream = b.streams[0]
+  b.app.openPasswordForm()
+  assert.equal(b.app.passwordForm.open, true)
+  const before = b.calls.length
+  Object.assign(b.app.passwordForm, { oldPassword: 'old-password', newPassword: 'short', confirmPassword: 'short' })
+  await b.app.submitPasswordChange()
+  assert.match(b.app.passwordError, /至少 8 位/)
+  Object.assign(b.app.passwordForm, { newPassword: 'new-password-1', confirmPassword: 'new-password-2' })
+  await b.app.submitPasswordChange()
+  assert.match(b.app.passwordError, /不一致/)
+  assert.equal(b.calls.length, before)
+
+  // 原密码错是 400,只在表单内提示,不踢回登录页
+  b.app.passwordForm.confirmPassword = 'new-password-1'
+  b.fetchWith(async () => response({ detail: { code: 400, message: '原密码错误' } }, 400))
+  await b.app.submitPasswordChange()
+  assert.equal(b.app.passwordError, '原密码错误')
+  assert.equal(b.app.passwordSaving, false)
+  assert.equal(b.app.authed, true)
+  assert.equal(b.store.getToken(), 'A')
+  const request = b.calls.at(-1)
+  assert.equal(request.url, '/api/auth/password')
+  assert.equal(request.init.method, 'POST')
+  assert.deepEqual(JSON.parse(request.init.body), { old_password: 'old-password', new_password: 'new-password-1' })
+
+  b.window.location.hash = '#/review'
+  b.fetchWith(async (url) => url === '/api/auth/password'
+    ? response({ token: 'A2', user: { id: 1, username: 'A' } })
+    : response([]))
+  await b.app.submitPasswordChange()
+  assert.equal(b.store.getToken(), 'A2')
+  assert.equal(b.storage['drivecast:token'], 'A2')
+  assert.equal(b.app.authed, true)
+  assert.equal(b.app.user.username, 'A')
+  assert.equal(b.app.route, 'review')
+  assert.equal(b.app.passwordForm.open, false)
+  assert.equal(b.app.passwordError, '')
+  // 旧会话的 SSE/音频 URL 带旧 token,必须随换凭证一并卸载
+  assert.equal(oldStream.closed, true)
+  assert.equal(b.playerModule.player.audio.src, '')
+  assert.equal(b.app.toast, '密码已修改，其他设备需重新登录')
+  await tick()
+  assert.equal(b.calls.at(-1).init.headers.Authorization, 'Bearer A2')
+  b.app.logout()
+  assert.equal(b.timers.size, 0)
+})
+
+test('late password-change response cannot install a token after logout', async () => {
+  const b = await browser()
+  b.login()
+  const pending = deferred()
+  b.fetchWith(() => pending.promise)
+  b.app.openPasswordForm()
+  Object.assign(b.app.passwordForm, { oldPassword: 'old-password', newPassword: 'new-password-1', confirmPassword: 'new-password-1' })
+  const task = b.app.submitPasswordChange()
+  b.app.logout()
+  pending.resolve(response({ token: 'A2', user: { id: 1, username: 'A' } }))
+  await task
+  assert.equal(b.store.getToken(), '')
+  assert.equal(b.app.authed, false)
+  assert.equal(b.app.passwordForm.open, false)
+  assert.equal(b.timers.size, 0)
+})

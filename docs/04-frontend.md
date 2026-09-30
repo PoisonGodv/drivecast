@@ -255,3 +255,4 @@ static/
 - **SSE 与音频例外**:`EventSource` 和 `<audio>/<a download>` 无法自定义请求头,这三类 GET(`/api/plans/{id}/events`、`/api/episodes/{id}/audio(/download)`)用 `withToken()` 拼 `?token=` 查询参数(后端仅对这 3 个 GET 端点开放 query token,其余端点带 `?token=` 也当无凭证)。`withToken` 只对本站相对路径生效,不把 token 外带到外域。
 - **路由守卫与启动验活**:启动时若有 token 先 `GET /api/auth/me` 验活(校验期间显示 loading,防登录页闪烁);未登录访问任何视图先落 `#/login`,`pendingHash` 记住原视图,登录成功后回跳;已登录访问 `#/login` 自动回首页。`EventSource` 401 会静默循环重连且无法被 fetch 拦截,SSE `onerror` 时探测一次 `/api/auth/me`,失效即走统一 401 路径踢回登录。
 - **退出登录**:头部"退出"入口 → 停播、断开 SSE、清 token、回 `#/login`。
+- **修改密码**:头部"修改密码"入口(`account.js`)打开弹层(原密码/新密码/确认),前端先校验长度≥8 与两次一致;`POST /api/auth/password` 失败(原密码错为 400、频繁为 429)只在表单内提示。成功后服务端吊销该用户全部旧 token 并回发新 token:`store.setToken` 换凭证(会重置会话,旧 SSE/音频 URL 带旧 token 一并卸载),再恢复登录态并重新应用当前路由。

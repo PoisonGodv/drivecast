@@ -22,10 +22,38 @@
         </nav>
         <div class="nav-user">
           <span class="nav-username" :title="user?.username">{{ user?.username }}</span>
+          <button class="nav-logout" @click="openPasswordForm" title="修改密码">修改密码</button>
           <button class="nav-logout" @click="logout" title="退出登录">退出</button>
         </div>
       </div>
     </header>
+
+    <!-- 修改密码 -->
+    <div v-if="authed && passwordForm.open" class="password-dialog" role="dialog" aria-modal="true" aria-labelledby="password-title" @click.self="closePasswordForm">
+      <div class="card password-card">
+        <h2 id="password-title" class="card-title">修改密码</h2>
+        <p class="card-meta">修改后其他设备上的登录会失效，本页保持登录。</p>
+        <form @submit.prevent="submitPasswordChange">
+          <div class="form-group">
+            <label class="form-label" for="password-old">原密码</label>
+            <input id="password-old" v-model="passwordForm.oldPassword" type="password" class="form-input" autocomplete="current-password">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="password-new">新密码（至少 8 位）</label>
+            <input id="password-new" v-model="passwordForm.newPassword" type="password" class="form-input" autocomplete="new-password">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="password-confirm">确认新密码</label>
+            <input id="password-confirm" v-model="passwordForm.confirmPassword" type="password" class="form-input" autocomplete="new-password">
+          </div>
+          <div v-if="passwordError" class="error" role="alert">{{ passwordError }}</div>
+          <div class="password-actions">
+            <button type="button" class="btn btn-ghost" :disabled="passwordSaving" @click="closePasswordForm">取消</button>
+            <button type="submit" class="btn btn-primary" :disabled="passwordSaving">{{ passwordSaving ? '提交中…' : '确认修改' }}</button>
+          </div>
+        </form>
+      </div>
+    </div>
 
     <main class="container">
       <!-- 启动登录态校验 -->

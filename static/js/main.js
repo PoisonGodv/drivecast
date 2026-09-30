@@ -12,6 +12,7 @@ import { api, connectPlanEvents } from './api.js?v=20260930c'
 import { resetPlayer, player, loadEpisode, togglePlay, seek, seekToRatio, cycleRate, toggleTranscript, formatTime, nextEpisode, previousEpisode, dismissEndedPanel, replayFromEnded } from './player.js?v=20260930c'
 import { store } from './store.js?v=20260930c'
 import { useReview, isDue, formatDate, masteryLabels, directionNames } from './review.js?v=20260930c'
+import { accountMixin } from './account.js?v=20260930c'
 
 const DIRECTIONS = [
   { key: 'backend_arch', label: '后端/架构面试' },
@@ -61,6 +62,8 @@ const appState = reactive({
   loggingIn: false,
   loginError: '',
   setupRequired: false, // 库里还没有可登录账号:登录页给出 reset-password 引导
+  // 修改密码表单(static/js/account.js)
+  ...accountMixin(),
   nowTick: Date.now(),
   _clockScheduled: false,
 
