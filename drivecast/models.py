@@ -178,3 +178,16 @@ class Job(Base):
     payload: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     created_at: Mapped[str] = _now()
     updated_at: Mapped[str] = _now()
+
+
+class UsageEvent(Base):
+    """用量流水(成本观察):kind=llm_tokens/tts_chars,ref_id 为集 ext_id。"""
+
+    __tablename__ = "usage_event"
+    __table_args__ = (Index("idx_usage_event_user_day", "user_id", "created_at"),)
+    id: Mapped[int] = _id()
+    user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    amount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    ref_id: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[str] = _now()

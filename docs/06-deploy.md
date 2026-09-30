@@ -17,6 +17,7 @@
 
 - 保持单进程，不要增加 uvicorn worker 数，也不要同时启动 CLI worker 使用同一 `data/`。
 - `WORKER_TEXT_CONCURRENCY=2`、`LLM_MAX_CONCURRENCY=6` 为默认；遇到模型端限流先降低 LLM 预算，不缩短长文请求超时。TTS 固定 `TTS_MAX_CONCURRENCY=1`。
+- 每用户每日额度：`QUOTA_DAILY_EPISODE_MINUTES=240`（按当日入队的集目标分钟数计，失败/取消不计；0=不限），`QUOTA_EXEMPT_USERNAMES=admin`（逗号分隔免额度用户）。超额接口返回 429；`GET /api/usage` 看当日额度与 LLM tokens/TTS 字数，`python -m drivecast usage --days 7` 看每用户每日汇总。文本/音频通道按用户轮转认领，单个用户排满队列不会饿死其他用户。
 - 检查现有 `.env` 的 `QUALITY_MAX_MINUTES`：旧模板是 22，40 分钟功能应配置为 45。新模板不会覆盖已有 `.env`。
 - 重启后对已有误报音频调用带用户认证的 `POST /api/episodes/{id}/audio/recheck`，随后查询 job。此操作不重新生成音频，也不收取 TTS/LLM 费用；仍有本地音频分析 CPU 开销。质量范围变化后旧快照在重检前仍保留原结论。
 
@@ -93,7 +94,7 @@ chmod 600 .env
 .venv/bin/alembic upgrade head
 ```
 
-**验收**：`sqlite3 data/drivecast.db "SELECT version_num FROM alembic_version"` 输出 `0006`。
+**验收**：`sqlite3 data/drivecast.db "SELECT version_num FROM alembic_version"` 输出 `0007`。
 
 升级已有库前必须停 Web/CLI worker 并备份 SQLite（含 WAL 状态，见 §7）和文件。迁移保留历史数据属主 `admin`（ID 1），初始密码为不可登录的锁定占位。新库同样预留该属主，不能用第一个普通用户接管历史数据。若遇到 schema 过旧、部分迁移或 admin/ID 1 冲突，**停止上线**，保留失败库和备份，排查冲突后重试；不要删除 user 表、强行 stamp head、手改归属或跳过校验。
 

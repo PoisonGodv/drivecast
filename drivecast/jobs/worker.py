@@ -11,10 +11,12 @@ import asyncio
 import json
 import time
 import traceback
+from collections import Counter
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, select, update
 
+from .. import quota
 from ..config import settings
 from ..db import close_db, session
 from ..models import Episode, Job, Plan
@@ -162,22 +164,39 @@ async def _recover_stuck_generating() -> int:
         return len(stuck)
 
 
-async def _next_pending(kinds=None, busy_plans=()) -> Job | None:
-    """有空闲执行名额才认领；同计划文本有序，不占着名额等待依赖。"""
+def _fair_order(heads: list[Job], running_by_user: dict[int, int]) -> list[Job]:
+    """跨用户轮转:通道内在跑最少的用户优先,平局取该用户最早排队的 job;用户内仍按 id。"""
+    first_by_user: dict[int, int] = {}
+    for job in heads:
+        first_by_user[job.user_id] = min(first_by_user.get(job.user_id, job.id), job.id)
+    return sorted(heads, key=lambda j: (
+        running_by_user.get(j.user_id, 0), first_by_user[j.user_id], j.id))
+
+
+async def _next_pending(kinds=None, busy_plans=(), running_by_user=None) -> Job | None:
+    """有空闲执行名额才认领；同计划文本有序，不占着名额等待依赖。
+
+    running_by_user 缺省时按库内同通道 running 行统计(测试/单次调用),
+    dispatcher 传入进程内通道实况。
+    """
     async with session() as s:
+        if running_by_user is None:
+            running_query = select(Job.user_id, func.count()).where(Job.status == "running")
+            if kinds is not None:
+                running_query = running_query.where(Job.kind.in_(kinds))
+            running_by_user = dict((await s.execute(running_query.group_by(Job.user_id))).all())
         query = select(Job).where(Job.status == "pending")
         if kinds is not None:
             query = query.where(Job.kind.in_(kinds))
         rows = list((await s.scalars(query.order_by(Job.id))).all())
         rows.sort(key=lambda j: (json.loads(j.payload).get("plan_id", ""),
                                  int(json.loads(j.payload).get("seq", 0)), j.id))
-        # 跨计划仍按最早排队顺序公平选择。
         first_by_plan = {}
         for row in rows:
             plan_id = json.loads(row.payload).get("plan_id", "")
             if plan_id not in busy_plans:
                 first_by_plan.setdefault(plan_id, row)
-        for row in sorted(first_by_plan.values(), key=lambda j: j.id):
+        for row in _fair_order(list(first_by_plan.values()), running_by_user):
             if row.kind == "script":
                 payload = json.loads(row.payload)
                 # 前序集失败不阻塞:本集 S0 缺上集自测题时降级为无回顾开场
@@ -278,7 +297,10 @@ async def _run_script_job(job: Job) -> None:
     payload = json.loads(job.payload)
     plan = planner.load_plan(payload["plan_id"])
     ep = next(e for e in plan.episodes if e.seq == payload["seq"])
-    await scriptwriter.write_script(plan, ep)
+    fresh = not settings.script_path(ep.episode_id).exists()  # 复用已有脚本不重复记账
+    data = await scriptwriter.write_script(plan, ep)
+    if fresh:
+        await quota.record_usage(job.user_id, "llm_tokens", data.get("usage_tokens"), ep.episode_id)
     from .pipeline import enqueue
     if not await _plan_alive(plan.plan_id):
         print(f"[worker] job#{job.id} 所属计划非存活,停止后续入队")
@@ -294,7 +316,10 @@ async def _run_tts_job(job: Job) -> None:
     script = scriptwriter.load_script(job.ref_id)
     if not script:
         raise RuntimeError(f"{job.ref_id} 无脚本,tts job 无法执行")
-    await tts.synthesize_episode(script, album=plan.title)
+    fresh = not settings.episode_audio_path(job.ref_id).exists()
+    meta = await tts.synthesize_episode(script, album=plan.title)
+    if fresh:
+        await quota.record_usage(job.user_id, "tts_chars", (meta or {}).get("char_count"), job.ref_id)
     await _finish(job.id, "done")
 
 
@@ -411,7 +436,8 @@ async def _dispatch(*, forever: bool) -> None:
                     while sum(l == lane for _, l in active.values()) < capacity:
                         busy = {json.loads(j.payload).get("plan_id", "")
                                 for j, l in active.values() if l == lane}
-                        job = await _next_pending(kinds, busy)
+                        running = Counter(j.user_id for j, l in active.values() if l == lane)
+                        job = await _next_pending(kinds, busy, running)
                         if job is None:
                             break
                         _claimed_jobs.add(job.id)
