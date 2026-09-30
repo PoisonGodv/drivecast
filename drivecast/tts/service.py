@@ -14,6 +14,7 @@ from pathlib import Path
 from ..config import ensure_data_dirs, settings
 from . import doubao, edge, friendly
 from .chunk import chunk_text
+from .errors import FFmpegTimeoutError, TTSProviderError, brief
 
 SILENCE_ROLE_SWITCH_MS = 250
 AUDIO_PIPELINE_VERSION = 7
@@ -24,9 +25,25 @@ CHAPTER_KEYS = SECTION_KEYS + (OUTRO_KEY,)
 LEGACY_SECTION_WEIGHTS = (0.07, 0.34, 0.27, 0.20, 0.12)
 
 
-def _voice_rate() -> dict[str, tuple]:
-    """speaker → (voice, rate);通道切换时音色/语速各用各的(docs/03 §3.5)。"""
-    if settings.tts_provider == "doubao":
+SPEAKERS = ("expert", "host")
+PROVIDERS = {"edge": edge, "doubao": doubao}
+SOURCES_FILE = "sources.json"  # chunk 目录内:每个 chunk 实际由哪个通道/音色产出
+
+
+def _provider_name(name: str | None = None) -> str:
+    return "doubao" if (name if name is not None else settings.tts_provider) == "doubao" else "edge"
+
+
+def _fallback_name(primary: str) -> str | None:
+    name = (settings.tts_fallback_provider or "").strip().lower()
+    if name not in PROVIDERS or name == primary:
+        return None
+    return name
+
+
+def _voice_rate(provider: str | None = None) -> dict[str, tuple]:
+    """speaker → (voice, rate);合成时按当前配置解析,tts.json 不固化音色(docs/03 §3.5)。"""
+    if _provider_name(provider) == "doubao":
         return {
             "expert": (settings.tts_doubao_voice_expert, settings.tts_doubao_rate_expert),
             "host": (settings.tts_doubao_voice_host, settings.tts_doubao_rate_host),
@@ -37,13 +54,74 @@ def _voice_rate() -> dict[str, tuple]:
     }
 
 
-async def _run(cmd: list[str]) -> tuple[int, str]:
+def _speaker(chunk: dict) -> str:
+    speaker = chunk.get("speaker", "expert")
+    return speaker if speaker in SPEAKERS else "expert"
+
+
+def _signature(provider: str, speaker: str) -> dict:
+    voice, rate = _voice_rate(provider)[speaker]
+    sig = {"provider": provider, "voice": voice, "rate": rate}
+    if provider == "edge":
+        sig["pitch"] = settings.tts_pitch
+    return sig
+
+
+def _load_sources(ep_id: str) -> dict[str, dict]:
+    try:
+        data = json.loads((settings.chunks_dir(ep_id) / SOURCES_FILE).read_text("utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_sources(ep_id: str, sources: dict[str, dict]) -> None:
+    path = settings.chunks_dir(ep_id) / SOURCES_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    part = path.with_suffix(".json.part")
+    part.write_text(json.dumps(sources, ensure_ascii=False, indent=1), "utf-8")
+    part.replace(path)
+
+
+def _chunk_matches(chunk: dict, recorded: dict | None, wanted: dict) -> bool:
+    if recorded is not None:
+        return recorded == wanted
+    # 旧版 tts.json 在 chunk 上固化了 voice/rate 且无来源记录:音色语速都一致才视为同源
+    return chunk.get("voice") == wanted["voice"] and chunk.get("rate") == wanted["rate"]
+
+
+def _voices_label(ep_id: str, chunks: list[dict]) -> str:
+    sources = _load_sources(ep_id)
+    voices = {(sources.get(str(c.get("seq"))) or {}).get("voice") or c.get("voice") or ""
+              for c in chunks}
+    return "+".join(sorted(v for v in voices if v))
+
+
+def _provider_summary(ep_id: str, chunks: list[dict]) -> dict:
+    sources = _load_sources(ep_id)
+    rows = [sources.get(str(c.get("seq"))) or {} for c in chunks]
+    providers = sorted({r.get("provider") for r in rows if r.get("provider")})
+    voices: dict[str, str] = {}
+    for chunk, row in zip(chunks, rows):
+        if row.get("voice"):
+            voices.setdefault(_speaker(chunk), row["voice"])
+    return {"provider": "+".join(providers) or None, "voices": voices}
+
+
+async def _run(cmd: list[str], *, timeout: float | None = None) -> tuple[int, str]:
+    limit = timeout or settings.ffmpeg_timeout_sec
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
     try:
-        stdout, stderr = await proc.communicate()
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=limit)
         return proc.returncode, (stdout + stderr).decode("utf-8", "ignore")
+    except asyncio.TimeoutError:
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+        raise FFmpegTimeoutError(
+            f"{Path(cmd[0]).name} 超过 {limit:g} 秒未完成,已强制终止;可调大 FFMPEG_TIMEOUT_SEC") from None
     except asyncio.CancelledError:
         if proc.returncode is None:
             proc.terminate()
@@ -146,16 +224,12 @@ def build_tts_json(script: dict) -> list[dict]:
     ep_id = script["episode_id"]
     chunks: list[dict] = []
     section_rows: list[dict] = []
-    voice_rate = _voice_rate()
 
     def add(section_key: str, section_title: str, speaker: str, text: str) -> None:
-        voice, rate = voice_rate[speaker]
         for part in chunk_text(friendly.friendly(text)):
             chunks.append({
                 "seq": len(chunks) + 1,
                 "speaker": speaker,
-                "voice": voice,
-                "rate": rate,
                 "text": part,
                 "section_key": section_key,
                 "section_title": section_title,
@@ -166,7 +240,7 @@ def build_tts_json(script: dict) -> list[dict]:
         if section["turns"]:
             for turn in section["turns"]:
                 speaker = turn.get("speaker", "expert")
-                add(section["key"], section["title"], speaker if speaker in voice_rate else "expert",
+                add(section["key"], section["title"], speaker if speaker in SPEAKERS else "expert",
                     turn.get("text", ""))
         elif section["content"].strip():
             add(section["key"], section["title"], "expert", section["content"])
@@ -219,26 +293,78 @@ def _section_rows(chunks: list[dict]) -> list[dict]:
     return rows
 
 
-async def _synth_missing(ep_id: str, chunks: list[dict], *, local_only: bool = False) -> list[Path]:
-    """只合成缺失的 chunk(断点续核心)，返回有序路径。"""
-    provider = doubao if settings.tts_provider == "doubao" else edge
+async def _synth_missing(
+    ep_id: str, chunks: list[dict], *, local_only: bool = False, provider: str | None = None,
+) -> list[Path]:
+    """只合成缺失或来源不符的 chunk(断点续核心)，返回有序路径。
+
+    来源不符 = 该 chunk 由别的通道/音色/语速产出，一律按当前通道重合成，保证整集同一音色；
+    local_only(本地升级)只复用既有块，不做来源校验也不请求 TTS。
+    """
+    name = _provider_name(provider)
+    module = PROVIDERS[name]
     chunks_dir = settings.chunks_dir(ep_id)
     paths = [chunks_dir / f"{c['seq']:03d}.mp3" for c in chunks]
     cached_durations = await _chunk_durations(paths)
-    missing = [(c, p) for c, p, d in zip(chunks, paths, cached_durations) if d <= 0]
+    sources = _load_sources(ep_id)
+    missing = []
+    adopted = False
+    for chunk, path, duration in zip(chunks, paths, cached_durations):
+        key = str(chunk["seq"])
+        wanted = _signature(name, _speaker(chunk))
+        if duration > 0 and (local_only or _chunk_matches(chunk, sources.get(key), wanted)):
+            if not local_only and key not in sources:
+                sources[key] = wanted
+                adopted = True
+            continue
+        missing.append((chunk, path, wanted))
+    if adopted:
+        _save_sources(ep_id, sources)
     if missing and local_only:
         raise RuntimeError("本地升级缺少有效音频块，未调用 TTS")
     if missing:
-        print(f"[tts] {ep_id}: {len(chunks)} 段,需合成 {len(missing)} 段")
-    for index, (chunk, path) in enumerate(missing, 1):
+        print(f"[tts] {ep_id}: {len(chunks)} 段,通道 {name},需合成 {len(missing)} 段")
+    for index, (chunk, path, wanted) in enumerate(missing, 1):
         print(f"[tts] 合成 {chunk['seq']:03d}/{len(chunks)} ({len(chunk['text'])}字) "
               f"[{index}/{len(missing)}]")
-        await provider.synth_chunk(chunk["text"], chunk["voice"], chunk["rate"], path)
+        await module.synth_chunk(chunk["text"], wanted["voice"], wanted["rate"], path)
         if await _probe_duration(path) <= 0:
             path.unlink(missing_ok=True)
             raise RuntimeError(f"chunk 无法探测时长:{chunk['seq']}")
-        await provider.jitter_sleep()
+        sources[str(chunk["seq"])] = wanted
+        _save_sources(ep_id, sources)
+        await module.jitter_sleep()
     return paths
+
+
+class TTSFallbackFailed(TTSProviderError):
+    """主备通道都失败;两边都不可重试时 job 也不再重试。"""
+
+    def __init__(self, message: str, retryable: bool) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
+
+async def _synth_with_fallback(ep_id: str, chunks: list[dict]) -> tuple[list[Path], dict]:
+    """主通道失败(不可重试或重试耗尽)且配了 TTS_FALLBACK_PROVIDER 时，整集改用备用通道重合成。"""
+    primary = _provider_name()
+    try:
+        return await _synth_missing(ep_id, chunks, provider=primary), {"provider": primary}
+    except TTSProviderError as exc:
+        fallback = _fallback_name(primary)
+        if fallback is None:
+            raise
+        primary_error = exc
+    print(f"[tts] {ep_id}: 主通道 {primary} 失败({brief(primary_error)}),整集改用 {fallback} 重合成")
+    try:
+        paths = await _synth_missing(ep_id, chunks, provider=fallback)
+    except TTSProviderError as exc:
+        raise TTSFallbackFailed(
+            f"主通道 {primary} 失败:{brief(primary_error, 120)};备用通道 {fallback} 也失败:{brief(exc, 120)}",
+            retryable=primary_error.retryable or exc.retryable,
+        ) from exc
+    return paths, {"provider": fallback, "fallback_from": primary,
+                   "fallback_reason": brief(primary_error, 300)}
 
 
 async def _probe_duration(path: Path) -> float:
@@ -506,8 +632,7 @@ async def synthesize_episode(script: dict, *, album: str = "", local_only: bool 
                 return await recheck_quality(script)
             tts_payload = (json.loads(settings.tts_path(ep_id).read_text("utf-8"))
                            if settings.tts_path(ep_id).exists() else {})
-            voices = "+".join(sorted({chunk.get("voice", "") for chunk in tts_payload.get("chunks", [])
-                                      if chunk.get("voice")}))
+            voices = _voices_label(ep_id, tts_payload.get("chunks", []))
             from ..persist import upsert_audio  # 迁移后旧 DB 行也补齐 M6 meta/quality
             await upsert_audio(ep_id, existing_meta, voices)
             return existing_meta
@@ -519,7 +644,11 @@ async def synthesize_episode(script: dict, *, album: str = "", local_only: bool 
     else:
         chunks = build_tts_json(script)
 
-    paths = await _synth_missing(ep_id, chunks, local_only=local_only)
+    if local_only:
+        paths = await _synth_missing(ep_id, chunks, local_only=True)
+        synth_info: dict = {}
+    else:
+        paths, synth_info = await _synth_with_fallback(ep_id, chunks)
     if len(paths) != len(chunks):
         raise RuntimeError(f"chunk 数不一致:期望 {len(chunks)},实际 {len(paths)}")
     durations = await _chunk_durations(paths)
@@ -578,9 +707,12 @@ async def synthesize_episode(script: dict, *, album: str = "", local_only: bool 
         "quality": quality,
         "status": "ready",
     }
+    tts_info = {**_provider_summary(ep_id, chunks), **synth_info}
+    if tts_info.get("provider") or tts_info.get("voices"):
+        meta["tts"] = tts_info  # 实际出声的通道/音色;回退时带 fallback_from/fallback_reason
     _atomic_meta(meta_path, meta)
 
-    voices = "+".join(sorted({chunk["voice"] for chunk in chunks}))
+    voices = _voices_label(ep_id, chunks)
     from ..persist import upsert_audio  # 延迟导入防环
     await upsert_audio(ep_id, meta, voices)
     if quality["status"] != "passed":
@@ -636,6 +768,5 @@ async def recheck_quality(script: dict) -> dict:
     meta["quality"] = report(duration, estimated, target, await _peak_db(final), chunk_check)
     _atomic_meta(meta_path, meta)
     from ..persist import upsert_audio
-    voices = "+".join(sorted({c.get("voice", "") for c in chunks if c.get("voice")}))
-    await upsert_audio(ep_id, meta, voices)
+    await upsert_audio(ep_id, meta, _voices_label(ep_id, chunks))
     return meta

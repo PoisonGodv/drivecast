@@ -248,8 +248,10 @@ async def _plan_generating(plan_ext_id: str) -> bool:
 
 
 async def _retry_or_fail(job: Job, exc: BaseException) -> None:
-    err = f"{type(exc).__name__}: {exc}"[-500:]
-    if job.attempt < job.max_attempt:
+    # 带 retryable 属性的异常(TTS 通道错误)消息已是给用户看的中文,不拼类名;False 则不重试
+    retryable = getattr(exc, "retryable", True)
+    err = (str(exc) if hasattr(exc, "retryable") else f"{type(exc).__name__}: {exc}")[-500:]
+    if retryable and job.attempt < job.max_attempt:
         cas_ok = await _finish(job.id, "pending", err)
         if cas_ok:
             print(f"[worker] job#{job.id} {job.kind}/{job.ref_id} 第{job.attempt}次失败,回队列重试: {err[:120]}")

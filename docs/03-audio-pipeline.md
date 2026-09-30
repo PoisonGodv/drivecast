@@ -18,8 +18,9 @@ drivecast/
   data/
     plans/{plan_id}.json          # S1 产出:学习计划(集列表)
     scripts/{ep_id}.script.json   # S2 产出:带说话人标记的原始脚本
-    tts/{ep_id}.tts.json          # S3 产出:TTS 友好化后的分段文本(每段含 voice/rate/pitch)
+    tts/{ep_id}.tts.json          # S3 产出:TTS 友好化后的分段文本(每段含 speaker/text/章节,不固化音色)
     audio/chunks/{ep_id}/{seq}.mp3 # S4 产出:逐段音频(最小合成单元)
+    audio/chunks/{ep_id}/sources.json # S4 产出:每个 seq 实际由哪个 provider/voice/rate 合成
     audio/episodes/{ep_id}.mp3    # S5 产出:最终整集(已归一+拼接+ID3)
     meta/{ep_id}.json             # S6 产出:章节标记/时长/字数统计
 ```
@@ -74,7 +75,8 @@ edge-tts 单次请求有长度与稳定性约束,且长文本容易被限流/截
 
 - 单 chunk 目标 **200~400 字**,硬上限 500 字
 - 切分点:句号/问号/感叹号;优先在语义边界,**不在术语或数字中间切**(正则保护 `[\w.]+%?` 连续段)
-- 每个 chunk 记录 `{seq, speaker, voice, rate, pitch, text}`,按 seq 命名落盘 → 断点续合成直接按缺失 seq 补
+- 每个 chunk 记录 `{seq, speaker, text, section_key, section_title}`,按 seq 命名落盘 → 断点续合成直接按缺失 seq 补
+- voice/rate **不写进 tts.json**,合成时按当前 provider 配置由 speaker 解析;改音色/切通道无需重建 tts.json。旧格式(chunk 上带 voice/rate)仍可加载
 
 ---
 
@@ -121,6 +123,14 @@ async def synth(text, voice, rate, pitch, out):
     await c.save(out)   # 每 chunk 独立 mp3
 ```
 
+### 3.4.1 通道健壮性:来源记录、快速失败、整集回退
+
+- **来源记录**:每合成一个 chunk 就把 `{provider, voice, rate[, pitch]}` 写进 `audio/chunks/{ep_id}/sources.json`。续跑时只复用来源与当前配置完全一致的块;切了 `TTS_PROVIDER` 或改了音色/语速的块一律重合成,保证一集之内不混通道/音色。无来源记录的旧块:旧 tts.json 里固化的 voice/rate 与当前配置一致才复用。本地 `audio_upgrade` 不做来源校验、不请求 TTS
+- **不可重试错误快速失败**(`tts/errors.py` 的 `TTSFatalError`):豆包 HTTP 401/403、鉴权/Resource-Id 不匹配、欠费/余额不足/资源包用尽、音色无效或未授权、HTTP 400,edge 音色/语速格式非法或服务端 401/403,以及凭证缺失——不进 chunk 退避,也不进 job 级重试,直接把中文说明写入 `job.error`(单集卡片"失败原因"可见)。并发/QPS 限流(429、`concurrency`)仍按可重试退避
+- **重试耗尽**(`TTSRetryExhausted`):单 chunk 退避用完,job 级仍按 `max_attempt` 重试
+- **整集回退**(`TTS_FALLBACK_PROVIDER`,默认空=关闭):主通道因上面两类错误失败且配置了不同的备用通道时,**整集**改用备用通道按其音色重合成(主通道已产出的块也重做,绝不混音);成品 meta 写 `tts: {provider, voices, fallback_from, fallback_reason}`,供 UI/质量数据展示。主备都失败时错误信息同时列出两边原因;两边都不可重试则 job 不再重试
+- **ffmpeg 超时**:`_run` 每次调用上限 `FFMPEG_TIMEOUT_SEC`(默认 600 秒),超时强杀子进程并抛 `FFmpegTimeoutError`,不会把音频通道永久卡死
+
 ### 3.5 豆包语音合成 seed-tts-2.0(付费可选通道)
 
 edge-tts 是免费公共服务,音色与稳定性受微软侧约束;接入火山引擎豆包 TTS(seed-tts-2.0)作为可切换的第二通道。协议用同族 v3 接口中的 **HTTP 单向流式**(`POST https://openspeech.bytedance.com/api/v3/tts/unidirectional`,NDJSON 流式返回 base64 音频)——本场景是批量出文件、chunk 文本本来就整段就绪,用不到双向 WS 的"边发文本边收音频",HTTP 通道更简单且是 API Key 鉴权的官方文档化组合。双向流式 WS(`wss://.../api/v3/tts/bidirection`)为同能力实时版,后续要做边生成边播再迁。
@@ -130,7 +140,7 @@ edge-tts 是免费公共服务,音色与稳定性受微软侧约束;接入火山
 - **切换**:`.env` 设 `TTS_PROVIDER=doubao` + `TTS_DOUBAO_API_KEY`;edge 通道配置不动,随时切回
 - **默认音色**:expert=`zh_male_m191_uranus_bigtts`(云舟,男)、host=`zh_female_vv_uranus_bigtts`(Vivi,女)——均为社区实测效果好的 2.0 音色;`TTS_DOUBAO_RATE_EXPERT/HOST` 复用 edge 的 ±N% 语义(speech_rate [-50,100])
 - **实现**(`tts/doubao.py`):单 chunk 单请求,流式逐行解析 NDJSON,`code=0` 的 data(base64)拼音频,`code=20000000` 结束,非 0 抛错;坏行抛错不吞(吞会静默丢音频)
-- **失败语义与 edge 通道完全一致**:全局信号量 + 指数退避 + `.part` 原子写 + 单 chunk 重试,断点续合成/章节/响度归一全链路不受通道影响
+- **失败语义与 edge 通道完全一致**:全局信号量 + 指数退避 + `.part` 原子写 + 单 chunk 重试,断点续合成/章节/响度归一全链路不受通道影响;鉴权/欠费/音色类错误不重试,见 §3.4.1
 - **试音**:`python scripts/doubao_voice_probe.py` 按当前配置音色各合成一句到 `data/audio/_probe/`
 - 付费按 `text` 字符计费;2.0 支持 `additions.context_texts` 自然语言情感/语速指令(逐句调用才稳定,暂未接,需要时按官方 additions 文档加)
 
