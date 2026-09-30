@@ -297,6 +297,27 @@
   background: rgba(138, 180, 248, 0.15);
 }
 
+.direction-option.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.direction-tag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(253, 214, 99, 0.18);
+  color: var(--warning);
+  font-size: 0.72rem;
+  vertical-align: middle;
+}
+
+.direction-reason {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
 /* 登录视图:垂直居中的窄卡片,复用 card/form/btn 体系 */
 .auth-page {
   display: flex;

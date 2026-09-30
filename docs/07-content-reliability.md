@@ -110,3 +110,18 @@
 - 不动 `.env`、不真实调用 LLM/edge-tts(测试一律 mock,禁止跑 smoke.py / plan / episode)。
 - 不 git commit(由主线审后统一提交)。
 - 不引入新第三方依赖。
+
+## 8. 方向可靠性标注与补事实卡
+
+`GET /api/directions` 按可靠性资产如实标注每个方向(`drivecast/content/directions.py`):
+
+- `tech_news`:未同时配置 `REF_SEARCH_PROVIDER` 与 `REF_SEARCH_API_KEY` 时 `available=false`,建主题/建计划返回 409——没有实时搜索的资讯只能靠模型记忆,必然过时或编造。
+- 其余方向若 `fact_cards/` 下没有 `direction` 等于该方向的卡,标 `experimental=true`(原因「暂无事实卡，审稿缺少依据」),仍可生成;审稿 prompt 会注明无事实卡,只让审稿人拦截高度确信的硬伤。
+- 目前 8 张事实卡全是 `backend_arch`,`ai_llm` / `source_dive` 为实验方向。
+
+给 `ai_llm` / `source_dive` 补卡(补一张即自动脱离「实验」标记,无需改代码):
+
+1. 新建 `drivecast/content/fact_cards/<slug>.json`,格式同 §1.2;`direction` 写 `ai_llm` 或 `source_dive`。
+2. 事实卡按关键词命中:审稿时取本集匹配到的题库题的 `topic` 关键词,与卡的 `title` / `direction` / `tags` / `slug` 做大小写不敏感的子串匹配,每集最多取 3 张。所以 `tags` 要覆盖 `question_bank/<direction>.json` 里对应题目的 `topic` 词(如 `["rag", "向量检索", "embedding"]`),否则卡永远不会被用上。
+3. 每条 fact 写一句可核验的 `claim` + `detail` + 真实 `source`(官方文档/论文/源码路径与版本);未人工核对的 `confidence < 1.0` 并在 claim 末尾注「待人工复核」。不要让 LLM 批量生成后直接入库——事实卡是审稿的 ground truth,必须人工复核。
+4. `.venv/bin/python -m pytest -q tests/test_directions.py` 确认 JSON 合法、方向标记已更新。

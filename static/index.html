@@ -139,13 +139,18 @@
           <label class="form-label">内容方向</label>
           <div class="direction-grid">
             <div
-              v-for="d in DIRECTIONS"
+              v-for="d in directionOptions"
               :key="d.key"
               class="direction-option"
-              :class="{ active: createForm.direction === d.key }"
-              @click="createForm.direction = d.key"
+              :class="{ active: createForm.direction === d.key, disabled: !d.available }"
+              :aria-disabled="!d.available"
+              :title="d.reason || ''"
+              @click="pickDirection(d)"
             >
               {{ d.label }}
+              <span v-if="d.experimental && d.available" class="direction-tag">实验</span>
+              <span v-if="!d.available" class="direction-tag">不可用</span>
+              <div v-if="d.reason" class="direction-reason">{{ d.reason }}</div>
             </div>
           </div>
         </div>

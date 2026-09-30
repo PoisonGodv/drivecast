@@ -24,7 +24,12 @@ REVIEWER_SYSTEM = """你是 drivecast 的事实审稿人,任务是在脚本进�
 
 def reviewer_user(meta: dict, body: str, fact_cards: list[dict], *, part: str = "") -> str:
     """把脚本元数据、纯文本正文与事实卡拼成审稿请求。"""
-    cards_text = json.dumps(fact_cards, ensure_ascii=False, indent=2) if fact_cards else "(本集未提供事实卡)"
+    # 无事实卡时审稿只能凭模型记忆,收紧 hard 判定,避免把正确内容误拦
+    cards_text = json.dumps(fact_cards, ensure_ascii=False, indent=2) if fact_cards else (
+        "(本集没有事实卡,无法逐条对照。只凭你的知识审查:仅当你高度确信某说法是错的"
+        "(如明显编造的 API/函数名、错误的数字/版本/配置)才标 hard;"
+        "拿不准的一律标 soft 或不标,不要因缺少事实卡本身而 block)"
+    )
     meta_text = "\n".join(f"{k}: {v}" for k, v in meta.items() if v)
     part_note = f"\n(本次只审{part};其余部分另行审查,不要因内容不完整而标记)" if part else ""
     return f"""请审查以下播客脚本的事实准确性。

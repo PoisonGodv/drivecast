@@ -460,3 +460,30 @@ test('cancel regenerate sends no request while confirmed empty reason is allowed
   assert.equal(b.calls.length, 1)
   assert.equal(JSON.parse(b.calls[0].init.body).reason, '')
 })
+
+test('create page uses /api/directions, blocks unavailable and falls back on failure', async () => {
+  const b = await browser()
+  b.login()
+  b.app.createForm.direction = 'tech_news'
+  b.fetchWith(async () => response([
+    { key: 'backend_arch', label: '后端', available: true, experimental: false, reason: '' },
+    { key: 'ai_llm', label: 'AI', available: true, experimental: true, reason: '暂无事实卡，审稿缺少依据' },
+    { key: 'tech_news', label: '资讯', available: false, experimental: false, reason: '未配置实时搜索' },
+  ]))
+  await b.app.loadDirections()
+  assert.equal(b.calls.at(-1).url, '/api/directions')
+  assert.equal(b.app.directionOptions.length, 3)
+  assert.equal(b.app.createForm.direction, 'backend_arch')
+  b.app.pickDirection(b.app.directionOptions[2])
+  assert.equal(b.app.createForm.direction, 'backend_arch')
+  assert.equal(b.app.toast, '未配置实时搜索')
+  b.app.pickDirection(b.app.directionOptions[1])
+  assert.equal(b.app.createForm.direction, 'ai_llm')
+
+  const c = await browser()
+  c.login()
+  c.fetchWith(async () => response({ detail: 'boom' }, 500))
+  await c.app.loadDirections()
+  assert.deepEqual(plain(c.app.directionOptions).map((d) => d.key), ['backend_arch', 'ai_llm', 'tech_news', 'source_dive'])
+  assert.ok(c.app.directionOptions.every((d) => d.available))
+})
