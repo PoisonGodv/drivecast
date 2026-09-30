@@ -774,7 +774,8 @@
 }
 
 .flashcard-inner {
-  position: relative;
+  /* grid 同格叠层:两面都参与高度计算,容器取两面较高者,内容自适应不被截断 */
+  display: grid;
   width: 100%;
   min-height: 220px;
   transform-style: preserve-3d;
@@ -787,8 +788,7 @@
 }
 
 .flashcard-face {
-  position: absolute;
-  inset: 0;
+  grid-area: 1 / 1;
   backface-visibility: hidden;
   border-radius: var(--radius);
   padding: 20px;

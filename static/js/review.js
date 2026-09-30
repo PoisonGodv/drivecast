@@ -158,17 +158,30 @@ export function useReview() {
     notice: '',
 
     filter: 'all', // 'all' | 'weak' | direction
+    planFilter: 0, // 0 = 全部计划;其余为 plan_id(按计划筛掉其他主题的旧题)
     flipped: {},
     grading: {},
 
     get filteredCards() {
       let cards = this.cards
+      if (this.planFilter) {
+        cards = cards.filter((card) => (card.plan_id ?? 0) === this.planFilter)
+      }
       if (this.filter === 'weak') {
         cards = cards.filter((card) => (card.mastery || 'unknown') !== 'mastered')
       } else if (this.filter !== 'all') {
         cards = cards.filter((card) => (card.direction || '') === this.filter)
       }
       return sortDueCards(cards)
+    },
+
+    get reviewPlans() {
+      const seen = new Map()
+      for (const card of this.cards) {
+        if (card.plan_id == null || seen.has(card.plan_id)) continue
+        seen.set(card.plan_id, card.plan_title || `计划 ${card.plan_id}`)
+      }
+      return Array.from(seen, ([id, title]) => ({ id, title }))
     },
 
     get dueTodayCount() {

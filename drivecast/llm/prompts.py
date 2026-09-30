@@ -42,7 +42,10 @@ def planner_user(topic: str, direction: str, episode_count: int, target_minutes:
 3. 每集给出:标题 / goal(听完能答出什么,一句话) / 3-5 个目标知识点 objectives / 一句话大纲 outline。
 4. 标题要具体到面试题粒度,不要「XX 简介」这种泛泛标题。
 5. 大纲按「未覆盖高频题簇优先」组织:题库地图里标注 [已覆盖] 的题是旧计划讲过的,不要重复主讲。
-6. 每集必须输出 covers:从题库地图的题 id 中选取本集能回应考点的题,1-6 个,只选题 id,不要杜撰。"""
+6. 每集必须输出 covers:从题库地图的题 id 中选取本集能回应考点的题,1-6 个,只选题 id,不要杜撰。
+7. 主题红线:所有集必须紧扣主题「{topic}」本身。标题/goal/objectives/covers 一律不得引入主题之外的技术栈
+   (例如主题是 MySQL 时,不要把 Redis/Kafka/Go runtime 等其他组件列为知识点或选进 covers;作为一句话对比参照可以,展开成段不行)。
+   题库地图与方向侧重只是风格参考,选题永远服从本条;宁可缩小范围,不要为了凑集数扩围到主题外。"""
 
 
 # ---------- scriptwriter 分段 agent(docs/02 §5,五段结构以 docs/01 §3.2 为权威) ----------
@@ -126,11 +129,12 @@ def section_user(plan: PlanRec, ep: EpisodeRec, key: str, target_words: int, *,
                  s2_grounding: str = "", context: str = "", part_note: str = "") -> str:
     """单段 agent 的 user prompt:全集上下文 + 本段专属输入 + 字数预算。"""
     parts = [f"""学习计划:「{plan.title}」(方向 {plan.direction},{DIRECTION_NAMES.get(plan.direction, "")})
+用户主题:「{plan.user_topic}」——主题红线:所有内容必须紧扣该主题;主题外的技术栈只能作一句话对比参照,禁止展开成段。
 本集是第 {ep.seq} 集:「{ep.title}」
 本集目标:{ep.goal}
 目标知识点:{", ".join(ep.objectives)}
 大纲:{ep.outline}
-方向侧重:{DIRECTION_HINTS.get(plan.direction, "")}"""]
+方向侧重:{DIRECTION_HINTS.get(plan.direction, "")}(方向画像仅定风格,选题服从上面的主题红线)"""]
     if key == "S0":
         recap = ("\n".join(f"- {q}" for q in recap_questions)
                  if recap_questions else "(无,这是第 1 集,写 30 秒开场)")

@@ -50,6 +50,7 @@ class ScriptBlockedError(RuntimeError):
 def _episode_text(plan: PlanRec, ep: EpisodeRec) -> str:
     """提取 episode 主题文本,用于题库关键词匹配。"""
     parts = [
+        plan.user_topic,  # 用户原始主题优先,防止大纲泛化后跑偏
         plan.title,
         ep.title,
         ep.goal,
@@ -59,21 +60,41 @@ def _episode_text(plan: PlanRec, ep: EpisodeRec) -> str:
     return " ".join(str(p) for p in parts if p).lower()
 
 
+# 题库 topic 词的最小长度:过短英文词(io/db/go)做裸 substring 匹配时误命中率极高
+_MIN_TOPIC_LEN = 3
+
+
+def _topic_hits(q: dict, text: str) -> bool:
+    """题的 topic 词是否命中文本(裸 substring,跳过过短词)。"""
+    return any(
+        len(topic) >= _MIN_TOPIC_LEN and topic in text
+        for topic in (str(t).lower() for t in q.get("topic", []) if t)
+    )
+
+
 def _match_questions(plan: PlanRec, ep: EpisodeRec, min_count: int = 2) -> list[dict]:
-    """按 episode 主题关键词匹配题库,不足时以方向高频题补齐(docs/07 §2)。"""
+    """按 episode 主题关键词匹配题库;不足时只补「与用户主题相关」的方向高频题。
+
+    兜底按用户主题原文过滤:主题外的方向高频题(如 MySQL 主题下的 Redis 题)不再被硬注入,
+    宁可少于 min_count 也不引入主题外考点。
+    """
     text = _episode_text(plan, ep)
     all_questions = get_question_bank(plan.direction)
     matched: list[dict] = []
     seen: set[str] = set()
     for q in all_questions:
         qid = q.get("id")
-        topics = [str(t).lower() for t in q.get("topic", []) if t]
-        if any(topic in text for topic in topics):
-            if qid not in seen:
-                matched.append(q)
-                seen.add(qid)
+        if _topic_hits(q, text) and qid not in seen:
+            matched.append(q)
+            seen.add(qid)
     if len(matched) < min_count:
-        high = [q for q in all_questions if q.get("frequency") == "high" and q.get("id") not in seen]
+        topic_text = f"{plan.user_topic} {plan.title}".lower()
+        high = [
+            q for q in all_questions
+            if q.get("frequency") == "high"
+            and q.get("id") not in seen
+            and _topic_hits(q, topic_text)
+        ]
         matched.extend(high[: min_count - len(matched)])
     return matched[:6]  # 注入上限,避免 prompt 过长
 
@@ -412,6 +433,7 @@ async def _write_script_with_refs(plan: PlanRec, ep: EpisodeRec, matched: list[d
         "plan_id": plan.plan_id,
         "seq": ep.seq,
         "title": ep.title,
+        "user_topic": plan.user_topic,  # 供事实审稿做主题一致性判定
         "script_format": ep.script_format,
         "content": out.content_md,
         "turns": [t.model_dump() for t in out.turns],  # 兼容展示/TTS；章节源见 sections

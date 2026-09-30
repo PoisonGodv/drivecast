@@ -601,6 +601,19 @@
   margin-top: 16px;
 }
 
+/* 按计划筛选下拉:与 review-filters 按钮同排,长标题截断 */
+.review-plan-select {
+  min-height: 34px;
+  max-width: 220px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+  color: var(--text);
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+}
+
 .review-card-shell {
   overflow: hidden;
   border: 1px solid var(--border);
@@ -706,7 +719,7 @@
 
 .review-card-shell .flashcard-framework {
   overflow-y: auto;
-  max-height: 130px;
+  max-height: 320px;
 }
 
 .flashcard-detail-row {

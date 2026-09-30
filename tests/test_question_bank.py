@@ -240,7 +240,7 @@ class ScriptwriterGroundingTest(unittest.IsolatedAsyncioTestCase):
         matched_count = sum(1 for q in get_question_bank("backend_arch") if q["question"] in s2_users[0])
         self.assertGreaterEqual(matched_count, 2, f"S2 prompt 应注入至少 2 道匹配题,实际 {matched_count}")
 
-    async def test_scriptwriter_falls_back_to_high_frequency_when_no_topic_match(self) -> None:
+    async def test_scriptwriter_skips_off_topic_fallback_when_no_topic_match(self) -> None:
         fake = FakeProvider(None)
 
         plan = PlanRec(
@@ -265,9 +265,8 @@ class ScriptwriterGroundingTest(unittest.IsolatedAsyncioTestCase):
 
         s2_users = [c["user"] for c in fake.calls
                     if "【本集必须覆盖的题库高频问法】" in c["user"]]
-        self.assertTrue(s2_users, "S2 段 prompt 应注入题库高频问法")
-        high_questions = [q for q in get_question_bank("backend_arch") if q["frequency"] == "high"]
-        self.assertIn(high_questions[0]["question"], s2_users[0])
+        # 主题完全不相关时,兜底不得把方向高频题(如 Redis SETNX)硬塞进 S2
+        self.assertFalse(s2_users, "主题外高频题不应被兜底注入 S2 prompt")
 
 
 if __name__ == "__main__":

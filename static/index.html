@@ -761,6 +761,18 @@
               :class="{ active: review.state.filter === dir }"
               @click="setReviewFilter(dir)"
             >{{ directionNames[dir] || dir }}</button>
+            <select
+              v-if="review.state.reviewPlans.length > 1"
+              class="review-plan-select"
+              aria-label="按计划筛选"
+              :value="review.state.planFilter"
+              @change="review.state.planFilter = Number($event.target.value)"
+            >
+              <option :value="0">全部计划</option>
+              <option v-for="plan in review.state.reviewPlans" :key="plan.id" :value="plan.id">
+                {{ plan.title }}
+              </option>
+            </select>
           </div>
 
           <div v-if="review.state.loading" class="loading">加载题库…</div>
