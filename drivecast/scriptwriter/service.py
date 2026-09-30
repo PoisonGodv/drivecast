@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from datetime import datetime, timezone
 
@@ -35,6 +36,8 @@ from ..schemas import (
     ScriptSection,
     SectionOut,
 )
+
+logger = logging.getLogger(__name__)
 
 _SPEAKER_CN = {"host": "主持人", "expert": "专家"}
 _SECTION_KEYS = ("S0", "S1", "S2", "S3", "S4")
@@ -260,7 +263,7 @@ async def _review(data: dict, ep: EpisodeRec, matched: list[dict]) -> dict:
     try:
         result = await reviewer.review_script(data, cards)
     except reviewer.ReviewerError as exc:
-        print(f"[reviewer] {ep.episode_id} 审稿失败,fail-open 放行: {exc}")
+        logger.warning(f"{ep.episode_id} 审稿失败,fail-open 放行: {exc}")
         return {
             "verdict": "pass", "flags": [], "reviewer_model": "",
             "reviewed_at": datetime.now(timezone.utc).isoformat(),
@@ -331,7 +334,7 @@ async def _gen_section_checked(plan: PlanRec, ep: EpisodeRec, key: str, target_w
     if n == 0:
         raise ValueError(f"分段脚本 {key} 内容为空(script_format={ep.script_format})")
     if not (target_words * 0.75 <= n <= target_words * 1.25):
-        print(f"[script] {ep.episode_id} {key} 字数 {n} 超出目标区间 "
+        logger.warning(f"{ep.episode_id} {key} 字数 {n} 超出目标区间 "
               f"[{int(target_words * 0.75)}, {int(target_words * 1.25)}],本段修正重出")
         note = (f"上一次本段正文 {n} 字,不符合要求。请重写本段,严格控制在 "
                 f"{int(target_words * 0.9)} 到 {int(target_words * 1.1)} 字之间,宁精勿滥。")
@@ -342,7 +345,7 @@ async def _gen_section_checked(plan: PlanRec, ep: EpisodeRec, key: str, target_w
         usage += retry_usage
         if _section_len(retry, ep.script_format) > 0:  # 重出为空则保留首版,不至于开天窗
             section, questions = retry, retry_questions
-    print(f"[script] {ep.episode_id} {key} 完成，耗时 {time.monotonic() - started:.1f}s")
+    logger.info(f"{ep.episode_id} {key} 完成，耗时 {time.monotonic() - started:.1f}s")
     return section, questions, usage
 
 
@@ -379,7 +382,7 @@ async def _gen_section_split(plan: PlanRec, ep: EpisodeRec, key: str, target_wor
 
     per = max(120, target_words // parts)
     scopes = _contiguous_slices(list(scope_items or []), parts)
-    print(f"[script] {ep.episode_id} {key} 目标 {target_words} 字超单 agent 上限,拆 {parts} 个子 agent 并行")
+    logger.info(f"{ep.episode_id} {key} 目标 {target_words} 字超单 agent 上限,拆 {parts} 个子 agent 并行")
 
     async def _part(index: int):
         part_kwargs = dict(kwargs)
@@ -432,7 +435,7 @@ async def _gen_sections(plan: PlanRec, ep: EpisodeRec, target_words: int,
         async def run():
             cached = (draft or {}).get("sections", {}).get(key)
             if cached:
-                print(f"[script] {ep.episode_id} {key} 复用已落盘草稿")
+                logger.info(f"{ep.episode_id} {key} 复用已落盘草稿")
                 return (ScriptSection.model_validate(cached["section"]),
                         [Question.model_validate(q) for q in cached.get("questions", [])], 0)
             result = await factory(fix_notes.get(key, ""))
@@ -540,7 +543,7 @@ async def _write_script_with_refs(plan: PlanRec, ep: EpisodeRec, matched: list[d
         except ScriptBlockedError as exc:
             dropped = _apply_block_to_draft(draft, data["sections"], exc, ep.script_format)
             _save_draft(ep.episode_id, draft)
-            print(f"[script] {ep.episode_id} 审稿拦截,定点重写 {sorted(dropped)}")
+            logger.info(f"{ep.episode_id} 审稿拦截,定点重写 {sorted(dropped)}")
             if round_no >= _REVIEW_FIX_ROUNDS:
                 raise
     references = await refs_task
@@ -568,7 +571,7 @@ def _assemble_script(plan: PlanRec, ep: EpisodeRec, out: ScriptOut, target_words
     # 质量校验:整集字数明显缩水时告警(分段门禁已在各段内做过一轮修正重出)
     n_chars = len(out.content_md)
     if n_chars < target_words * 0.6:
-        print(f"[warn] {ep.episode_id} 脚本报备字数 {target_words},实际只有 {n_chars} 字,内容可能缩水")
+        logger.warning(f"{ep.episode_id} 脚本报备字数 {target_words},实际只有 {n_chars} 字,内容可能缩水")
 
     questions = out.questions[:3]
     while len(questions) < 3:  # LLM 少给了就占位,保证结构完整(M5 复习闭环依赖 3 题/集)

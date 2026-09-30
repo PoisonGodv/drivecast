@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import re
 import secrets
-import sys
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -27,6 +27,8 @@ from sqlalchemy import select
 from .config import settings
 from .db import session
 from .models import User
+
+logger = logging.getLogger(__name__)
 
 PBKDF2_ITERATIONS = 600_000
 LOCKED_HASH = "!locked"  # 迁移占位:verify_password 恒 False,reset-password 后置真实哈希
@@ -90,10 +92,9 @@ def _auth_secret() -> str:
     global _random_secret
     if _random_secret is None:
         _random_secret = secrets.token_hex(32)
-        print(
-            "[auth] AUTH_SECRET 未配置,已生成进程级随机密钥;重启后所有 token 将失效。"
-            "生产/长期运行请在 .env 配置 AUTH_SECRET。",
-            file=sys.stderr,
+        logger.warning(
+            "AUTH_SECRET 未配置,已生成进程级随机密钥;重启后所有 token 将失效。"
+            "生产/长期运行请在 .env 配置 AUTH_SECRET。"
         )
     return _random_secret
 

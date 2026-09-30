@@ -145,7 +145,7 @@ scripts/ci.sh   # 装 requirements.lock + requirements-dev.txt，跑 pytest 与�
 ```bash
 .venv/bin/python run.py
 # 另开终端验收：
-curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080/        # 200
+curl -s http://127.0.0.1:8080/api/healthz                            # {"status":"ok",...} HTTP 200
 curl -s -o /dev/null -w "%{http_code}\n" -H "Range: bytes=0-1023" \
   http://127.0.0.1:8080/api/episodes/1/audio                          # 401：未认证不可读音频
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080/api/review/today  # 401
@@ -185,7 +185,18 @@ sudo systemctl enable --now drivecast
 sudo systemctl status drivecast --no-pager     # Active: active (running)
 ```
 
-**验收**：`curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/` → `200`。
+**验收**：`curl -s -w "\n%{http_code}\n" http://127.0.0.1:8080/api/healthz` → `{"status":"ok",...}` 与 `200`。不要用 `curl /` 验收：根路径由 SPA fallback 兜底，服务半死也恒返回 200。
+
+健康检查 `GET /api/healthz` 匿名可访问，只返回布尔：
+
+| 字段 | 含义 |
+|---|---|
+| `db` | 数据库可查询 |
+| `worker` | `WORKER_ENABLED=true` 时常驻消费 task 存活（关闭消费时恒为 true） |
+| `disk` | `data/` 所在盘空闲 ≥ `DISK_MIN_FREE_MB`（默认 1024） |
+| `queue` | 最老 pending job 等待 < `QUEUE_STALL_ALERT_SEC`（默认 3600 秒），或消费已关闭 |
+
+`status`：db 或 worker 故障为 `down`（HTTP 503，应重启/报警）；仅 disk/queue 异常为 `degraded`（HTTP 200，需人工关注）；全部正常为 `ok`。外部监控（uptime-kuma、云拨测等）探测该接口即可。
 
 ## 5. 端到端验收（真实生成一集）
 
@@ -262,12 +273,14 @@ sudo systemctl start drivecast
 | 场景 | 操作 |
 |---|---|
 | 暂停生成队列（不禁止 API 写入） | `WORKER_ENABLED=false` 启动，或 systemd unit 临时加该 Environment |
-| 看日志 | `journalctl -u drivecast -f` |
+| 看日志 | `journalctl -u drivecast -f`；每行格式 `时间 级别 模块: 消息`，job/集 id 在消息里（如 `job#12`、`ep_...`），`LOG_LEVEL=DEBUG/INFO/WARNING` 调级别 |
+| 健康检查 | `curl -s http://127.0.0.1:8080/api/healthz`（见 §4） |
 | 某集生成失败 | Web 计划详情页该行"重试"，或 `POST /api/episodes/{id}/generate` |
 | 整夜批量生成 | 建计划后放任即可，job 表持久化，进程重启自动续跑（running→pending 重入队） |
 | edge-tts 偶发限流 | 已内置串行 + 指数退避，无需干预；持续 429/403 检查出站网络是否被墙 |
 | 计划删除安全约束 | 删除依赖 `run.py` 单进程架构中止正在运行的任务；**严禁**在外置 CLI worker 消费时从 Web 执行删除 |
-| 磁盘清理 | `data/audio/chunks/` 是中间产物，成品在 `data/audio/episodes/`，确认成品完好后可清 chunks |
+| 磁盘清理 | `data/audio/chunks/` 是中间产物：worker 空闲时每小时自动回收"成品存在、状态 ready、成品超过 `CHUNKS_RETENTION_DAYS`（默认 3，0=关闭）天且无在途音频任务"的集的分片；手动执行 `.venv/bin/python -m drivecast gc [--dry-run]` |
+| 磁盘不足 | 空闲低于 `DISK_MIN_FREE_MB` 时每小时告警一次，worker 暂停认领音频任务（tts/音频升级/质检，文本任务照常），空间恢复后自动继续；healthz 报 `degraded` |
 
 ## 10. 常见故障
 

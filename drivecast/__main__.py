@@ -9,6 +9,7 @@
   python -m drivecast create-user <username>     # 建登录用户(无注册接口)
   python -m drivecast reset-password <username>  # 重置密码(0006 后给 admin 后置密码)
   python -m drivecast usage [--days N]           # 每用户每日用量(分钟/LLM tokens/TTS 字数)
+  python -m drivecast gc [--dry-run]             # 回收过期 audio/chunks(CHUNKS_RETENTION_DAYS)
 """
 from __future__ import annotations
 
@@ -242,7 +243,23 @@ async def cmd_usage(args) -> None:
         print(f"{r['date']:<12}{r['username']:<16}{r['minutes']:>8}{r['llm_tokens']:>14}{r['tts_chars']:>12}")
 
 
+async def cmd_gc(args) -> None:
+    from . import ops
+
+    if settings.chunks_retention_days <= 0:
+        print("CHUNKS_RETENTION_DAYS=0,chunk 回收已关闭")
+        return
+    removed = await ops.gc_chunks(dry_run=args.dry_run)
+    verb = "将回收" if args.dry_run else "已回收"
+    print(f"{verb} {len(removed)} 集的 chunk 目录")
+    for ep_ext_id in removed:
+        print(f"  {ep_ext_id}")
+
+
 def main() -> None:
+    from .logging_setup import setup_logging
+
+    setup_logging()
     ensure_data_dirs()
     p = argparse.ArgumentParser(prog="drivecast", description="通勤技术播客生成器")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -282,6 +299,8 @@ def main() -> None:
 
     sp = sub.add_parser("usage", help="每用户每日用量汇总")
     sp.add_argument("--days", type=int, default=7, help="统计近 N 天(含今天),默认 7")
+    sp = sub.add_parser("gc", help="回收已就绪且过期的集的音频分片目录")
+    sp.add_argument("--dry-run", action="store_true", help="只列出将回收的集,不删除")
 
     args = p.parse_args()
     commands = {
@@ -289,6 +308,7 @@ def main() -> None:
         "generate": cmd_generate, "worker": cmd_worker, "dbsync": cmd_dbsync,
         "list": cmd_list, "create-user": cmd_create_user, "reset-password": cmd_reset_password,
         "usage": cmd_usage,
+        "gc": cmd_gc,
     }
 
     async def run_command() -> None:

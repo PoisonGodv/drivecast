@@ -263,7 +263,7 @@ class FailFastTest(unittest.IsolatedAsyncioTestCase):
         job = Job(id=7, kind="tts", ref_id="ep", payload="{}", attempt=1, max_attempt=3)
         with patch.object(worker, "_finish", AsyncMock(return_value=True)) as finish, \
                 patch.object(worker, "set_episode_status", AsyncMock()) as status, \
-                patch.object(worker.traceback, "print_exception"):
+                patch.object(worker.logger, "error"):
             await worker._retry_or_fail(job, TTSFatalError("豆包 TTS 额度不足或账户欠费"))
         finish.assert_awaited_once_with(7, "failed", "豆包 TTS 额度不足或账户欠费")
         status.assert_awaited_once_with("ep", "failed")

@@ -100,6 +100,12 @@ class Settings(BaseSettings):
     worker_enabled: bool = True                 # 验收/维护时用 WORKER_ENABLED=false 关闭消费
     worker_stale_running_sec: int = 3600        # running 超过该时长视为孤儿,空轮询时复位 pending
 
+    # ---- 运维(健康检查/磁盘/分片回收)----
+    log_level: str = "INFO"
+    disk_min_free_mb: int = 1024                # data_dir 所在盘低于该空闲量:告警并暂停认领音频任务
+    queue_stall_alert_sec: int = 3600           # 最老 pending job 等待超过该时长,healthz 报 degraded
+    chunks_retention_days: int = 3              # 成品就绪超过 N 天回收 audio/chunks/{ep};0=不回收
+
     # ---- 认证(用户名+密码登录,HS256 JWT)----
     auth_secret: str = ""               # JWT 签名密钥;空=进程级随机(重启后所有 token 失效),部署必配
     auth_token_expire_days: int = 7     # token 有效期(天);无刷新/撤销,自然过期

@@ -4,13 +4,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-import sys
-import traceback
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from .. import ops
 from ..auth import get_current_user, login_ready_usernames
 from ..config import ensure_data_dirs, settings
 from ..db import close_db, init_db
@@ -36,8 +36,14 @@ class _RedactTokenFilter(logging.Filter):
 
 
 logging.getLogger("uvicorn.access").addFilter(_RedactTokenFilter())
+logger = logging.getLogger(__name__)
 
 _worker_task: asyncio.Task | None = None
+
+
+def worker_alive() -> bool:
+    """常驻 worker task 仍在运行(未启用时为 False,由调用方结合 worker_enabled 判断)。"""
+    return _worker_task is not None and not _worker_task.done()
 
 
 @asynccontextmanager
@@ -47,10 +53,9 @@ async def lifespan(app: FastAPI):
     ensure_data_dirs()
     await init_db()
     if not await login_ready_usernames():
-        print(
-            "[auth] 还没有可登录的账号(admin 仍是锁定占位)。请先执行:\n"
-            "  .venv/bin/python -m drivecast reset-password admin",
-            file=sys.stderr,
+        logger.warning(
+            "还没有可登录的账号(admin 仍是锁定占位)。请先执行:\n"
+            "  .venv/bin/python -m drivecast reset-password admin"
         )
 
     # 维护/验收可通过 WORKER_ENABLED=false 禁止消费昂贵任务。
@@ -61,8 +66,8 @@ async def lifespan(app: FastAPI):
             # run_forever 自带异常兜底,正常情况下到不了这里;
             # 真到这说明消费循环彻底退出——job 将无人消费(UI 停留"排队中"),必须打出来。
             if not task.cancelled() and task.exception() is not None:
-                print("[worker] 常驻消费 task 已死亡,队列将不再被消费!", file=sys.stderr)
-                traceback.print_exception(task.exception())
+                logger.critical("常驻消费 task 已死亡,队列将不再被消费!",
+                                exc_info=task.exception())
 
         _worker_task.add_done_callback(_log_worker_dead)
 
@@ -90,6 +95,15 @@ app.include_router(api_outline.router, dependencies=[Depends(get_current_user)])
 app.include_router(api_audio.router, dependencies=[Depends(get_current_user)])
 app.include_router(api_review.router, dependencies=[Depends(get_current_user)])
 app.include_router(api_directions.router, dependencies=[Depends(get_current_user)])
+
+
+# 匿名(探活/监控用),必须注册在 SPA fallback 之前
+@app.get("/api/healthz", include_in_schema=False)
+async def healthz():
+    """匿名健康检查:只回布尔,不含用户数据与路径。db/worker 故障 503,磁盘/队列告警仍 200。"""
+    report = await ops.health_report(worker_alive())
+    return JSONResponse(report, status_code=503 if report["status"] == "down" else 200)
+
 
 class NoCacheStaticFiles(StaticFiles):
     """无构建前端禁止强缓存,确保更新即生效,彻底杜绝 Safari 混用旧 JS。"""

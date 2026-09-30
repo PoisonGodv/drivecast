@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
@@ -23,6 +24,7 @@ _CONSUMING = ("pending", "running", "done")
 _INFLIGHT = ("pending", "running")
 USAGE_KINDS = ("llm_tokens", "tts_chars")
 _user_locks: dict[int, asyncio.Lock] = {}
+logger = logging.getLogger(__name__)
 
 
 def _local_date(column):
@@ -147,7 +149,7 @@ async def record_usage(user_id: int, kind: str, amount, ref_id: str = "") -> Non
             s.add(UsageEvent(user_id=user_id, kind=kind, amount=amount, ref_id=ref_id))
             await s.commit()
     except Exception as exc:  # noqa: BLE001
-        print(f"[usage] 记账失败 user={user_id} {kind}={amount} {ref_id}: {exc}")
+        logger.warning(f"记账失败 user={user_id} {kind}={amount} {ref_id}: {exc}")
 
 
 async def _usage_sums(user_id: int, day: str) -> dict[str, int]:

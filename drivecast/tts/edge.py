@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 from pathlib import Path
 
@@ -26,6 +27,8 @@ def _fatal(exc: Exception) -> TTSFatalError | None:
     if isinstance(exc, aiohttp.ClientResponseError) and exc.status in (401, 403):
         return TTSFatalError(f"edge-tts 服务拒绝访问(HTTP {exc.status}),可能被限制或需升级 edge-tts")
     return None
+
+logger = logging.getLogger(__name__)
 
 
 def _get_sem() -> asyncio.Semaphore:
@@ -59,7 +62,7 @@ async def synth_chunk(text: str, voice: str, rate: str, out_path: Path) -> None:
                 if attempt == max_retry:
                     break
                 delay = 2 ** (attempt - 1) + random.uniform(0, 0.5)
-                print(f"[tts] chunk {out_path.name} 第{attempt}次失败({type(exc).__name__}), {delay:.1f}s 后重试")
+                logger.warning(f"chunk {out_path.parent.name}/{out_path.name} 第{attempt}次失败({type(exc).__name__}), {delay:.1f}s 后重试")
                 await asyncio.sleep(delay)
         raise TTSRetryExhausted(
             f"edge-tts 片段 {out_path.stem} 连续 {max_retry} 次失败:{brief(last or '')}") from last

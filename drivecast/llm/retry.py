@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import logging
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 import httpx
 import openai
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -44,6 +47,6 @@ async def with_retry(
             if not is_retryable(exc) or attempt == max_attempts:
                 raise
             delay = base_delay * (2 ** (attempt - 1))
-            print(f"[retry] {what} 第{attempt}次失败({type(exc).__name__}), {delay:.0f}s 后重试")
+            logger.warning(f"{what} 第{attempt}次失败({type(exc).__name__}), {delay:.0f}s 后重试")
             await asyncio.sleep(delay)
     raise last  # pragma: no cover

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import random
 from pathlib import Path
 
@@ -20,6 +21,8 @@ import httpx
 from ..config import settings
 from ..concurrency import request_limit
 from .errors import TTSFatalError, TTSRetryExhausted, brief
+
+logger = logging.getLogger(__name__)
 
 STATUS_OK = 20000000  # code=20000000 音频合成结束的成功状态码
 # 欠费/余额/额度/鉴权类关键词:重试只会重复扣请求次数、刷屏日志,直接判死
@@ -183,7 +186,7 @@ async def synth_chunk(text: str, voice: str, rate: str | int, out_path: Path) ->
                 if attempt == max_retry:
                     break
                 delay = 2 ** (attempt - 1) + random.uniform(0, 0.5)
-                print(f"[tts] chunk {out_path.name} 第{attempt}次失败({exc}), {delay:.1f}s 后重试")
+                logger.warning(f"chunk {out_path.parent.name}/{out_path.name} 第{attempt}次失败({exc}), {delay:.1f}s 后重试")
                 await asyncio.sleep(delay)
         raise TTSRetryExhausted(
             f"豆包 TTS 片段 {out_path.stem} 连续 {max_retry} 次失败:{brief(last or '')}") from last
