@@ -1,0 +1,2 @@
+# 测试/CI 依赖(运行依赖见 requirements.lock);scripts/ci.sh 会一并安装
+pytest~=9.1
