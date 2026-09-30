@@ -200,7 +200,9 @@ class AudioRecoveryTest(unittest.IsolatedAsyncioTestCase):
     async def test_only_bad_chunk_is_synthesized_and_local_upgrade_never_calls_provider(self):
         with tempfile.TemporaryDirectory() as tmp, patch.object(settings, 'data_dir', Path(tmp)), \
              patch.object(settings, 'tts_provider', 'edge'):
-            chunks = [{'seq': i, 'text': '正文', 'voice': 'v', 'rate': '-5%'} for i in (1, 2)]
+            # 旧格式 chunk 固化了当前配置的音色/语速,视为同源可复用
+            chunks = [{'seq': i, 'text': '正文', 'voice': settings.tts_voice_expert,
+                       'rate': settings.tts_rate_expert} for i in (1, 2)]
             directory = settings.chunks_dir('ep')
             directory.mkdir(parents=True)
             (directory / '001.mp3').write_bytes(b'good')

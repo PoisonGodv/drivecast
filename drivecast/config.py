@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     tts_pitch: str = "+0Hz"
     tts_max_concurrency: int = Field(default=1, ge=1, le=1)  # 同进程所有通道严格单路
     tts_chunk_max_retries: int = 5
+    tts_fallback_provider: str = ""               # ""=关闭;edge|doubao:主通道整集失败时整集改用该通道
     # 豆包语音合成 seed-tts-2.0(docs/03 §3.5);TTS_PROVIDER=doubao 时生效
     tts_doubao_api_key: str = ""                  # 新版控制台 API Key(X-Api-Key),一个 key 即可
     tts_doubao_app_key: str = ""                  # 旧版控制台退回 App ID + Access Token 一对
@@ -58,6 +59,7 @@ class Settings(BaseSettings):
     loudness_i: float = -16.0       # LUFS,播客常用
     loudness_tp: float = -1.5
     loudness_lra: float = 11.0
+    ffmpeg_timeout_sec: int = Field(default=600, ge=10)  # 单次 ffmpeg 调用上限,超时强杀
     silence_between_chunks_ms: int = 100   # 同角色段间停顿
     chapter_titles: str = "回顾与开场|核心知识点|高频面试问法|答题框架|易错点与自测"
     chapter_title_refs: str = "参考资料"   # 片尾参考文献口播段(S5)章节名

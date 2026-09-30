@@ -19,12 +19,40 @@ import httpx
 
 from ..config import settings
 from ..concurrency import request_limit
+from .errors import TTSFatalError, TTSRetryExhausted, brief
 
 STATUS_OK = 20000000  # code=20000000 音频合成结束的成功状态码
+# 欠费/余额/额度/鉴权类关键词:重试只会重复扣请求次数、刷屏日志,直接判死
+_QUOTA_HINTS = ("arrear", "insufficient", "balance", "欠费", "余额", "quota", "exceeded the limit",
+                "not enough", "resource pack", "资源包", "用量", "trial")
+_AUTH_HINTS = ("unauthorized", "forbidden", "invalid api key", "invalid token", "access denied",
+               "authenticat", "鉴权", "not granted", "resource id is mismatched")
+_VOICE_HINTS = ("speaker", "voice_type", "voice type", "音色")
 
 
 class DoubaoTTSError(RuntimeError):
     """豆包 TTS 远端/协议错误,message 已含错误码与官方 message。"""
+
+
+class DoubaoFatalError(DoubaoTTSError, TTSFatalError):
+    """鉴权/欠费/音色无效等不可重试错误,message 为中文说明 + 原始错误。"""
+
+
+def classify_error(raw: str, http_status: int | None = None) -> DoubaoTTSError:
+    """把远端错误映射成可重试/不可重试;并发限流(concurrency)仍按可重试退避。"""
+    low = raw.lower()
+    if http_status == 429 or "concurrency" in low or "qps" in low or "rate limit" in low:
+        return DoubaoTTSError(raw)
+    if http_status in (401, 403) or any(h in low for h in _AUTH_HINTS):
+        return DoubaoFatalError(
+            f"豆包 TTS 鉴权失败({raw}),请检查 TTS_DOUBAO_API_KEY 与 TTS_DOUBAO_RESOURCE_ID 是否匹配、是否已开通")
+    if any(h in low for h in _QUOTA_HINTS):
+        return DoubaoFatalError(f"豆包 TTS 额度不足或账户欠费({raw}),请到火山引擎控制台充值或购买资源包")
+    if any(h in low for h in _VOICE_HINTS):
+        return DoubaoFatalError(f"豆包 TTS 音色不可用({raw}),请检查 TTS_DOUBAO_VOICE_* 是否填写正确且已授权")
+    if http_status == 400:
+        return DoubaoFatalError(f"豆包 TTS 拒绝了请求参数({raw})")
+    return DoubaoTTSError(raw)
 
 
 def speech_rate_value(rate: str | int | float) -> int:
@@ -57,7 +85,7 @@ def _require_credentials() -> None:
         return
     if settings.tts_doubao_app_key and settings.tts_doubao_access_key:
         return
-    raise RuntimeError(
+    raise TTSFatalError(
         "豆包 TTS 缺少凭证: TTS_DOUBAO_API_KEY(新版控制台,推荐,一个 key 即可)"
         "或 TTS_DOUBAO_APP_KEY+TTS_DOUBAO_ACCESS_KEY(旧版);写入 .env(docs/03 §3.5)")
 
@@ -104,7 +132,7 @@ async def _synthesize_once(
         ) as resp:
             if resp.status_code != 200:
                 body = (await resp.aread()).decode("utf-8", "ignore")
-                raise DoubaoTTSError(f"HTTP {resp.status_code}: {body[:300]}")
+                raise classify_error(f"HTTP {resp.status_code}: {body[:200]}", resp.status_code)
             async for line in resp.aiter_lines():
                 line = line.strip()
                 if not line:
@@ -114,7 +142,7 @@ async def _synthesize_once(
                 if code == STATUS_OK:
                     break  # 合成结束
                 if code not in (0, None):
-                    raise DoubaoTTSError(f"status={code} {item.get('message', '')}")
+                    raise classify_error(f"status={code} {item.get('message', '')}")
                 data = item.get("data")
                 if data:
                     try:
@@ -146,7 +174,7 @@ async def synth_chunk(text: str, voice: str, rate: str | int, out_path: Path) ->
                 part_path.write_bytes(await _synthesize_once(text, voice, rate))
                 part_path.replace(out_path)
                 return
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, TTSFatalError):
                 part_path.unlink(missing_ok=True)
                 raise
             except Exception as exc:  # noqa: BLE001 — 网络/限流/协议错误统一退避
@@ -157,7 +185,8 @@ async def synth_chunk(text: str, voice: str, rate: str | int, out_path: Path) ->
                 delay = 2 ** (attempt - 1) + random.uniform(0, 0.5)
                 print(f"[tts] chunk {out_path.name} 第{attempt}次失败({exc}), {delay:.1f}s 后重试")
                 await asyncio.sleep(delay)
-        raise RuntimeError(f"chunk 合成失败({max_retry} 次): {out_path}") from last
+        raise TTSRetryExhausted(
+            f"豆包 TTS 片段 {out_path.stem} 连续 {max_retry} 次失败:{brief(last or '')}") from last
 
 
 async def jitter_sleep() -> None:
