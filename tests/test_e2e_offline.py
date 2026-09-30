@@ -111,11 +111,14 @@ class OfflineEndToEndTest(unittest.TestCase):
         plan_id = created.json()["plan_id"]
 
         self._run_worker()
-        # 大纲若停在 draft(需人工确认后才入队各集),确认后再跑一轮;否则已链式入队
-        if self.client.get(f"/api/plans/{plan_id}").json()["status"] == "draft":
-            confirmed = self.client.post(f"/api/plans/{plan_id}/confirm")
-            self.assertLess(confirmed.status_code, 300, confirmed.text)
-            self._run_worker()
+        # 大纲停在 draft,人工确认后才入队各集
+        draft = self.client.get(f"/api/plans/{plan_id}").json()
+        self.assertEqual(draft["status"], "draft")
+        self.assertNotIn("SectionOut", self.llm.calls)
+        confirmed = self.client.post(f"/api/plans/{plan_id}/confirm")
+        self.assertEqual(confirmed.status_code, 200, confirmed.text)
+        self.assertEqual(len(confirmed.json()["job_ids"]), EPISODES)
+        self._run_worker()
 
         detail = self.client.get(f"/api/plans/{plan_id}").json()
         self.assertEqual(detail["status"], "active")
