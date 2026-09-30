@@ -760,9 +760,13 @@ async def recheck_quality(script: dict) -> dict:
     except (OSError, ValueError):
         chunks = []
     paths = [settings.chunks_dir(ep_id) / f"{int(c['seq']):03d}.mp3" for c in chunks]
+    prev_chunk_check = ((meta.get("quality") or {}).get("checks") or {}).get("chunks")
     if chunks and all(p.is_file() for p in paths):
         durations = await _chunk_durations(paths)
         chunk_check = _chunk_consistency(chunks, paths, durations)
+    elif isinstance(prev_chunk_check, dict) and prev_chunk_check.get("passed") is not None:
+        # chunk 已被回收(ops.gc_chunks):成品没变,沿用回收前的分段校验结论
+        chunk_check = prev_chunk_check
     else:
         chunk_check = {"passed": None, "reason": "旧音频缺少分段验证材料"}
     meta.update(episode_id=ep_id, audio_path=str(final), duration_sec=duration)

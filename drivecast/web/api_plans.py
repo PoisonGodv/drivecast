@@ -301,7 +301,8 @@ async def generate_episode(episode_id: int, user: User = Depends(get_current_use
         raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
     async with pipeline.get_plan_lifecycle_lock(plan.ext_id):
         await _assert_plan_active(plan)
-        reuse = await quota.has_inflight("script", ep.ext_id)
+        reuse = (await quota.has_inflight("script", ep.ext_id)
+                 or settings.script_path(ep.ext_id).exists())
         async with quota.reserve(user, 0 if reuse else quota.episode_minutes(plan.ext_id, ep.seq)):
             job_id = await pipeline.enqueue_episode(plan.ext_id, ep.seq, ep.ext_id, user_id=user.id)
     return {"episode_id": episode_id, "job_id": job_id, "status": "pending"}
@@ -481,10 +482,17 @@ def _episode_event(ep: dict) -> dict:
     return event
 
 
-async def _plan_events(plan_id: int, user_id: int):
+async def _token_still_valid(user_id: int, token_version: int) -> bool:
+    async with session() as s:
+        current = await s.scalar(select(User.token_version).where(User.id == user_id))
+    return current == token_version
+
+
+async def _plan_events(plan_id: int, user_id: int, token_version: int = 0):
     """SSE 生成进度推送(docs/04 §3):轮询 DB 状态变化 → 推事件,EventSource 断线重连由前端负责。
 
     轮询每次都带 user_id 重新校验归属:跨用户/不存在统一推 not_found,不泄露存在性。
+    每轮也核对 token_version:改密吊销后已建立的长连接同样立即断开。
     """
     poll = 2.0  # 简单可靠,不额外依赖
     last_statuses: dict[int, tuple] = {}
@@ -492,6 +500,8 @@ async def _plan_events(plan_id: int, user_id: int):
     try:
         yield f"retry: 3000\n\n"
         while not server_stopping.is_set():
+            if not await _token_still_valid(user_id, token_version):
+                break
             detail = await library_service.get_plan(plan_id, user_id=user_id)
             if detail is None:
                 yield f"event: plan_status\ndata: {json.dumps({'plan_id': plan_id, 'ext_id': '', 'status': 'not_found', 'ready': 0, 'total': 0, 'all_done': False, 'error': 'not_found'})}\n\n"
@@ -531,7 +541,7 @@ async def _plan_events(plan_id: int, user_id: int):
 async def plan_events(plan_id: int, user: User = Depends(get_current_user)) -> StreamingResponse:
     """SSE 进度主通道(docs/04 §3);EventSource 无法自定义头,鉴权走 ?token= 白名单。"""
     return StreamingResponse(
-        _plan_events(plan_id, user.id),
+        _plan_events(plan_id, user.id, user.token_version),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
     )

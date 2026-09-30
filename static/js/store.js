@@ -24,7 +24,8 @@ export const store = {
   },
 
   setToken(token, username = '') {
-    this.clearToken(false)
+    // 同一用户换凭证(改密)只轮换 token,本地进度/冲刺清单属于本人,不能清
+    this.clearToken(false, { keepLocalData: Boolean(username) && username === currentUsername })
     currentToken = token || ''
     currentUsername = username || ''
     try {
@@ -37,7 +38,7 @@ export const store = {
     }
   },
 
-  clearToken(clearShared = true) {
+  clearToken(clearShared = true, { keepLocalData = false } = {}) {
     // 旧标签页只撤销自己的会话，不能删除另一页刚写入的新凭证。
     const ownsShared = readStorage(TOKEN_KEY) === currentToken && readStorage(USER_KEY) === currentUsername
     currentToken = ''
@@ -48,6 +49,7 @@ export const store = {
         localStorage.removeItem(TOKEN_KEY)
         localStorage.removeItem(USER_KEY)
       }
+      if (keepLocalData) return
       // 旧版未分账号的进度和冲刺清单不能带到下一位用户。
       for (const key of Object.keys(localStorage)) {
         if (key.startsWith(`${PREFIX}pos:`) || key.startsWith('drivecast.review.sprint.completed.')) {

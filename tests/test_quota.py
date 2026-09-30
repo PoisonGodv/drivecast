@@ -192,6 +192,33 @@ class QuotaTest(unittest.TestCase):
 
     # ---------- 用量记账 ----------
 
+    def test_deleting_plan_does_not_refund_consumed_minutes(self) -> None:
+        asyncio.run(self._add_jobs(self._script_job(1, "done"), self._script_job(2, "running"),
+                                   self._script_job(3, "pending")))
+        self.assertEqual(self.client.get("/api/usage").json()["minutes_used"], 90)
+        self.assertEqual(self.client.delete(f"/api/plans/{self.plan_id}").status_code, 200)
+        # done+running 已消耗 60 分钟保留;未开跑的 pending 退回
+        usage = self.client.get("/api/usage").json()
+        self.assertEqual((usage["minutes_used"], usage["minutes_remaining"]), (60, 40))
+
+    def test_retry_with_existing_script_is_not_charged_again(self) -> None:
+        asyncio.run(self._add_jobs(self._script_job(1, "done"), self._script_job(2, "done"),
+                                   self._script_job(3, "done")))  # 已用 90,剩 10
+        script = settings.script_path("plan_q_ep2")
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text("{}", "utf-8")
+        # 集 2 脚本已在(如 TTS 通道故障后重试):只重做 TTS,不再扣 30 分钟
+        resp = self.client.post(f"/api/episodes/{self.ep_ids[1]}/generate")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(self.client.get("/api/usage").json()["minutes_used"], 90)
+        with mock.patch.object(settings, "quota_daily_episode_minutes", 120):
+            # generate_all:集 2 在途、集 1/3 脚本缺失 → 只计集 1+3 共 60 > 剩 30
+            self.assertEqual(self.client.post(f"/api/plans/{self.plan_id}/generate_all").status_code, 429)
+            for seq in (1, 3):
+                path = settings.script_path(f"plan_q_ep{seq}")
+                path.write_text("{}", "utf-8")
+            self.assertEqual(self.client.post(f"/api/plans/{self.plan_id}/generate_all").status_code, 200)
+
     def test_usage_events_reported_and_cli(self) -> None:
         async def _record():
             await quota.record_usage(self.alice_id, "llm_tokens", 1200, "plan_q_ep1")

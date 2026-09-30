@@ -606,6 +606,8 @@ const appState = reactive({
       this.outline = null
       return
     }
+    // 切到另一份草稿时先清空,拉到本计划大纲前不能显示/确认上一个计划的内容
+    if (this.outline && String(this.outline.plan_id) !== String(plan.id)) this.outline = null
     const session = getSession()
     try {
       const outline = await api.getOutline(plan.id)

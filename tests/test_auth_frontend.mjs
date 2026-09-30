@@ -513,12 +513,15 @@ test('password change validates inline, keeps this tab logged in with the new to
   assert.deepEqual(JSON.parse(request.init.body), { old_password: 'old-password', new_password: 'new-password-1' })
 
   b.window.location.hash = '#/review'
+  b.storage.setItem('drivecast.review.sprint.completed.2026-09-20', '{"9":true}')
   b.fetchWith(async (url) => url === '/api/auth/password'
     ? response({ token: 'A2', user: { id: 1, username: 'A' } })
     : response([]))
   await b.app.submitPasswordChange()
   assert.equal(b.store.getToken(), 'A2')
   assert.equal(b.storage['drivecast:token'], 'A2')
+  // 同一用户换凭证:本人的冲刺清单(仅存本地)不能被清
+  assert.equal(b.storage['drivecast.review.sprint.completed.2026-09-20'], '{"9":true}')
   assert.equal(b.app.authed, true)
   assert.equal(b.app.user.username, 'A')
   assert.equal(b.app.route, 'review')

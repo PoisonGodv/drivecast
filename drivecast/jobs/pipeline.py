@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -14,6 +15,8 @@ from sqlalchemy import select, update
 
 from ..db import session
 from ..models import Episode, Job, Plan
+
+logger = logging.getLogger(__name__)
 
 _plan_locks: dict[str, asyncio.Lock] = {}
 
@@ -96,6 +99,10 @@ async def fence_plan_for_deletion(plan_id: int) -> PlanDeletionFence | None:
         cancelled_job_ids = [row[0] for row in job_rows]
         running_job_ids = [row[0] for row in job_rows if row[1] == "running"]
 
+        # 必须在把 running 标 cancelled 之前结转:删计划不能退回已消耗的额度
+        from .. import quota
+        await quota.carry_over_deleted(s, ep_ext_ids)
+
         await s.execute(update(Plan).where(Plan.id == plan_id).values(status="cancelled"))
 
         await s.execute(
@@ -147,7 +154,11 @@ async def cancel_plan_jobs(plan_ext_id: str) -> int:
 async def enqueue_episode(
     plan_id: str, seq: int, ep_ext_id: str, user_id: int | None = None
 ) -> int:
-    return await enqueue("script", ep_ext_id, {"plan_id": plan_id, "seq": seq}, user_id=user_id)
+    from ..config import settings
+    payload = {"plan_id": plan_id, "seq": seq}
+    if settings.script_path(ep_ext_id).exists():
+        payload["reuse_script"] = True  # 写稿会直接复用,额度不再计这一集
+    return await enqueue("script", ep_ext_id, payload, user_id=user_id)
 
 
 async def enqueue_plan_all(plan, user_id: int | None = None) -> list[int]:
@@ -169,6 +180,10 @@ async def enqueue_plan_all(plan, user_id: int | None = None) -> list[int]:
                 except (OSError, TypeError, ValueError, json.JSONDecodeError):
                     pipeline_version = 0
             if pipeline_version < AUDIO_PIPELINE_VERSION:
+                if not settings.chunks_dir(ep.episode_id).is_dir():
+                    # chunk 已回收,本地升级无从做起;成品仍可正常播放,需要新管线请走勘误重生成
+                    logger.info(f"{ep.episode_id} chunk 已回收,跳过本地音频升级")
+                    continue
                 job_ids.append(await enqueue(
                     "audio_upgrade", ep.episode_id,
                     {"plan_id": plan.plan_id, "seq": ep.seq}, user_id=user_id,

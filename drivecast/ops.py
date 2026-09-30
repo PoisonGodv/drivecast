@@ -6,6 +6,7 @@ import json
 import logging
 import shutil
 import time
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import func, select, text
@@ -116,17 +117,33 @@ async def _db_ok() -> bool:
 
 
 async def _queue_ok() -> bool:
+    """有 pending 却长时间没有任何 job 推进(认领/完成)才算卡住;正常积压不告警。"""
     if not settings.worker_enabled:
         return True
     try:
         async with session() as s:
-            # created_at 是 SQLite datetime('now')(UTC),在库内算等待秒数避免时区混用
-            waited = await s.scalar(
-                select((func.julianday("now") - func.julianday(func.min(Job.created_at))) * 86400)
-                .where(Job.status == "pending"))
+            pending = await s.scalar(select(Job.id).where(Job.status == "pending").limit(1))
+            if pending is None:
+                return True
+            # 与 pending 同时存在的 running 行,或最近一次状态变化(updated_at,本地时间)
+            running = await s.scalar(select(Job.id).where(Job.status == "running").limit(1))
+            if running is not None:
+                return True
+            last_move = await s.scalar(select(func.max(Job.updated_at)).where(
+                Job.status.in_(("done", "failed", "cancelled", "running"))))
+            if last_move is None:
+                # 从未推进过:以最早 pending 的入队时间为起点(created_at 为 UTC,转本地)
+                last_move = await s.scalar(select(func.datetime(func.min(Job.created_at), "localtime"))
+                                           .where(Job.status == "pending"))
     except Exception:  # noqa: BLE001
         return False
-    return waited is None or waited < settings.queue_stall_alert_sec
+    if last_move is None:
+        return True
+    try:
+        idle = (datetime.now() - datetime.fromisoformat(str(last_move))).total_seconds()
+    except ValueError:
+        return True
+    return idle < settings.queue_stall_alert_sec
 
 
 async def health_report(worker_alive: bool) -> dict:

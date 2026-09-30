@@ -23,6 +23,8 @@ from .models import Job, UsageEvent, User
 _CONSUMING = ("pending", "running", "done")
 _INFLIGHT = ("pending", "running")
 USAGE_KINDS = ("llm_tokens", "tts_chars")
+# 删除计划会物理删掉 job 行;已花掉的分钟数先按原 job 日期落到流水,否则删计划即可退回额度
+DELETED_MINUTES = "quota_minutes_deleted"
 _user_locks: dict[int, asyncio.Lock] = {}
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,8 @@ def _job_minutes(job: Job, cache: dict) -> int:
         payload = {}
     if job.kind == "plan":
         return plan_request_minutes(payload.get("episode_count"), payload.get("target_minutes"))
+    if payload.get("reuse_script"):
+        return 0  # 脚本已在,只重做 TTS(如通道故障后重试),不再调 LLM,不计额
     return episode_minutes(str(payload.get("plan_id") or ""), int(payload.get("seq") or 0), cache)
 
 
@@ -81,8 +85,25 @@ async def minutes_used(user_id: int, day: str | None = None) -> int:
                 and_(Job.kind == "plan", Job.status.in_(_INFLIGHT)),
             ),
         ))).all()
+        deleted = await s.scalar(select(func.coalesce(func.sum(UsageEvent.amount), 0)).where(
+            UsageEvent.user_id == user_id, UsageEvent.kind == DELETED_MINUTES,
+            _local_date(UsageEvent.created_at) == day))
     cache: dict = {}
-    return sum(_job_minutes(j, cache) for j in jobs)
+    return sum(_job_minutes(j, cache) for j in jobs) + int(deleted or 0)
+
+
+async def carry_over_deleted(s, ref_ids: list[str]) -> None:
+    """删除计划前调用(同一事务):已开跑/完成的 script job 分钟数按原日期转存流水。"""
+    if not ref_ids:
+        return
+    jobs = (await s.scalars(select(Job).where(
+        Job.kind == "script", Job.ref_id.in_(ref_ids), Job.status.in_(("running", "done"))))).all()
+    cache: dict = {}
+    for job in jobs:
+        minutes = _job_minutes(job, cache)
+        if minutes > 0:
+            s.add(UsageEvent(user_id=job.user_id, kind=DELETED_MINUTES, amount=minutes,
+                             ref_id=job.ref_id, created_at=job.created_at))
 
 
 async def remaining_minutes(user: User) -> int | None:
@@ -117,7 +138,7 @@ async def reserve(user: User, minutes: int):
 
 
 async def new_script_minutes(plan_rec) -> int:
-    """整计划批量只对将新建的 script job 计额:已有成品音频或已在途的集不算。"""
+    """整计划批量只对将新建且要调 LLM 的 script job 计额:已有成品音频、已在途或脚本已在的集不算。"""
     refs = [ep.episode_id for ep in plan_rec.episodes]
     async with session() as s:
         inflight = set((await s.scalars(select(Job.ref_id).where(
@@ -125,7 +146,8 @@ async def new_script_minutes(plan_rec) -> int:
     total = 0
     for ep in plan_rec.episodes:
         final = settings.episode_audio_path(ep.episode_id)
-        if (final.exists() and final.stat().st_size > 0) or ep.episode_id in inflight:
+        if ((final.exists() and final.stat().st_size > 0) or ep.episode_id in inflight
+                or settings.script_path(ep.episode_id).exists()):
             continue
         total += int(ep.target_minutes)
     return total
@@ -160,7 +182,7 @@ async def _usage_sums(user_id: int, day: str) -> dict[str, int]:
             .group_by(UsageEvent.kind)
         )).all()
     sums = {kind: 0 for kind in USAGE_KINDS}
-    sums.update({kind: int(total) for kind, total in rows})
+    sums.update({kind: int(total) for kind, total in rows if kind in USAGE_KINDS})
     return sums
 
 
@@ -201,6 +223,8 @@ async def daily_report(days: int = 7) -> list[dict]:
     for day, user_id, kind, total in events:
         if kind in USAGE_KINDS:
             rows[(day, user_id)][kind] += int(total or 0)
+        elif kind == DELETED_MINUTES:
+            rows[(day, user_id)]["minutes"] += int(total or 0)
     return [
         {"date": day, "user_id": uid, "username": names.get(uid, f"#{uid}"), **vals}
         for (day, uid), vals in sorted(rows.items(), key=lambda kv: (kv[0][0], kv[0][1]), reverse=True)

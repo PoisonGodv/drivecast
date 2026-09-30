@@ -162,6 +162,32 @@ class PasswordChangeApiTest(unittest.TestCase):
         self.assertEqual(relogin.status_code, 200)
         self.assertEqual(decode_claims(relogin.json()["token"]), (self.alice_id, 1))
 
+    def test_open_sse_stream_ends_after_token_revoked(self) -> None:
+        from drivecast.models import Plan, Topic
+        from drivecast.web import api_plans
+
+        async def _run():
+            async with db.session() as s:
+                t = Topic(title="t", direction="backend_arch", user_id=self.alice_id)
+                s.add(t)
+                await s.flush()
+                p = Plan(ext_id="plan_sse", topic_id=t.id, title="t", status="active", user_id=self.alice_id)
+                s.add(p)
+                await s.commit()
+                plan_id = p.id
+            stream = api_plans._plan_events(plan_id, self.alice_id, 0)
+            first = [await stream.__anext__(), await stream.__anext__()]  # retry + 首个 plan_status
+            async with db.session() as s:
+                (await s.get(User, self.alice_id)).token_version = 1
+                await s.commit()
+            rest = [chunk async for chunk in stream]  # 版本已变:下一轮直接结束
+            return first, rest
+
+        with mock.patch.object(asyncio, "sleep", new=mock.AsyncMock()):
+            first, rest = asyncio.run(asyncio.wait_for(_run(), timeout=10))
+        self.assertIn("plan_status", first[1])
+        self.assertEqual(rest, [])
+
     def test_wrong_old_password_is_400_and_changes_nothing(self) -> None:
         token = self._login().json()["token"]
         res = self._change(token, old="not-my-password")
