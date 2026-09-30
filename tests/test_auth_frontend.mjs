@@ -117,17 +117,17 @@ async function browser(shared = null) {
     return result
   }
   // Link dependencies sequentially to mirror the browser module map (including version query strings).
-  for (const name of ['session.js', 'store.js?v=20260914b', 'api.js?v=20260914b', 'player.js?v=20260914b', 'review.js?v=20260914b', 'main.js']) {
+  for (const name of ['session.js', 'store.js?v=20260930a', 'api.js?v=20260930a', 'player.js?v=20260930a', 'review.js?v=20260930a', 'main.js']) {
     const mod = await module(new URL(`js/${name}`, root))
     await mod.evaluate()
   }
   const ns = (name) => modules.get(new URL(`js/${name}`, root).href).namespace
   return {
     app: window.__DRIVECAST__, window, storage, streams, timers, calls,
-    api: ns('api.js?v=20260914b').api,
-    withToken: ns('api.js?v=20260914b').withToken,
-    store: ns('store.js?v=20260914b').store,
-    playerModule: ns('player.js?v=20260914b'),
+    api: ns('api.js?v=20260930a').api,
+    withToken: ns('api.js?v=20260930a').withToken,
+    store: ns('store.js?v=20260930a').store,
+    playerModule: ns('player.js?v=20260930a'),
     fetchWith(fn) { fetcher = fn },
     login(token = 'A') {
       this.store.setToken(token, token)

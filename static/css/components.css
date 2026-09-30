@@ -241,6 +241,14 @@
   flex-wrap: wrap;
 }
 
+.episode-error {
+  margin-top: 4px;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .episode-actions {
   display: flex;
   gap: 8px;

@@ -7,8 +7,8 @@
 
 import { reactive } from '../vendor/petite-vue.js'
 import { getSession, isCurrentSession, onSessionChange } from './session.js'
-import { api, withToken } from './api.js?v=20260914b'
-import { store } from './store.js?v=20260914b'
+import { api, withToken } from './api.js?v=20260930a'
+import { store } from './store.js?v=20260930a'
 
 export const playbackRates = [0.75, 1, 1.25, 1.5, 2]
 
@@ -36,6 +36,7 @@ export const player = {
     sizeBytes: 0,
     jumpToChapter: (startSec) => seekToTime(startSec),
     error: '',
+    buffering: false,
     // 播完参考文献面板:音频自然结束时展示本集参考链接,倒计时自动连播下一集
     endedOpen: false,
     endedRefs: [],
@@ -66,6 +67,7 @@ export function resetPlayer() {
   loadGeneration += 1
   stopProgressTimer()
   clearEndedTimer()
+  clearRecover()
   Object.assign(player.state, JSON.parse(initialState))
   audio.pause()
   audio.removeAttribute('src')
@@ -237,7 +239,10 @@ async function loadAudioMeta(episodeId) {
 
 export function togglePlay() {
   if (player.state.playing) pause()
-  else play()
+  else if (audio.error && ownsPlayback()) {
+    clearRecover()
+    scheduleRecover()
+  } else play()
 }
 
 export function cycleRate() {
@@ -301,9 +306,31 @@ function hasNextReadyEpisode() {
   return sortedReadyEpisodes().some((e) => e.seq > current.seq)
 }
 
+async function refreshPlayerPlan() {
+  const planId = player.state.plan?.id
+  if (!planId) return
+  const current = playbackGuard()
+  try {
+    const fresh = await api.getPlan(planId)
+    if (!current() || !Array.isArray(fresh?.episodes)) return
+    player.state.plan = fresh
+    player.state.episode = findEpisodeById(player.state.episodeId) || player.state.episode
+  } catch (err) {
+    console.warn('刷新计划失败,按缓存选集', err)
+  }
+}
+
 async function onEpisodeEnded() {
   const current = playbackGuard()
   if (!current()) return
+  // 边生成边听:播放期间后续集可能刚就绪,选下一集前先刷新计划
+  await refreshPlayerPlan()
+  if (!current()) return
+  // 锁屏/后台时定时器会被节流,面板倒计时可能永不归零,直接连播
+  if (document.visibilityState === 'hidden') {
+    nextEpisode()
+    return
+  }
   // 参考文献优先复用已加载文稿,否则现取;取不到/为空则保持原行为直接连播
   let refs = Array.isArray(player.state.script?.references) ? player.state.script.references : null
   if (refs === null && player.state.episodeId) {
@@ -345,11 +372,15 @@ function sortedReadyEpisodes() {
     .sort((a, b) => a.seq - b.seq)
 }
 
-export function nextEpisode() {
-  const current = player.state.episode
-  if (!current || !player.state.plan) return
-  const ready = sortedReadyEpisodes()
-  const next = ready.find((e) => e.seq > current.seq)
+export async function nextEpisode() {
+  if (!player.state.episode || !player.state.plan) return
+  if (!sortedReadyEpisodes().some((e) => e.seq > player.state.episode.seq)) {
+    const current = playbackGuard()
+    await refreshPlayerPlan()
+    if (!current()) return
+  }
+  const cur = player.state.episode
+  const next = sortedReadyEpisodes().find((e) => e.seq > cur.seq)
   if (next) loadEpisode(next.id, player.state.plan)
   else pause()
 }
@@ -384,6 +415,7 @@ export async function loadEpisode(episodeId, plan) {
 
   playbackOwner = getSession()
   loadGeneration += 1
+  clearRecover()
   dismissEndedPanel(false)  // 切集时收起播完面板(若正开着)并取消连播倒计时
   player.state.error = ''
   player.state.episodeId = String(episodeId)
@@ -457,9 +489,59 @@ audio.addEventListener('ended', () => {
   void onEpisodeEnded()
 })
 
-audio.addEventListener('error', (e) => {
+const MAX_RECOVER_ATTEMPTS = 5
+let recoverAttempts = 0
+let recoverTimer = null
+
+function scheduleRecover() {
+  if (!ownsPlayback() || recoverTimer) return
+  if (recoverAttempts >= MAX_RECOVER_ATTEMPTS) {
+    player.state.buffering = false
+    player.state.error = `音频加载失败：${audio.error?.message || '网络异常'}，请检查网络后点 ▶ 重试`
+    return
+  }
+  const current = playbackGuard()
+  const resumeAt = player.state.currentTime || 0
+  const retry = () => {
+    if (!current()) return
+    recoverTimer = null
+    recoverAttempts += 1
+    audio.src = withToken(`/api/episodes/${player.state.episodeId}/audio`)
+    audio.playbackRate = player.state.playbackRate
+    audio.currentTime = resumeAt
+    play()
+  }
+  player.state.buffering = true
+  player.state.error = ''
+  if (!navigator.onLine) {
+    recoverTimer = 'offline'
+    window.addEventListener('online', retry, { once: true })
+    return
+  }
+  recoverTimer = setTimeout(retry, Math.min(2000 * 2 ** recoverAttempts, 15000))
+}
+
+function clearRecover() {
+  if (typeof recoverTimer === 'number') clearTimeout(recoverTimer)
+  recoverTimer = null
+  recoverAttempts = 0
+  player.state.buffering = false
+}
+
+audio.addEventListener('error', () => {
   if (!ownsPlayback()) return
-  player.state.error = `音频加载失败：${audio.error?.message || '未知错误'}`
+  scheduleRecover()
+})
+
+audio.addEventListener('waiting', () => {
+  if (!ownsPlayback()) return
+  player.state.buffering = true
+})
+
+audio.addEventListener('playing', () => {
+  if (!ownsPlayback()) return
+  player.state.buffering = false
+  recoverAttempts = 0
 })
 
 // 锁屏进度节流上报（每 5s 一次）

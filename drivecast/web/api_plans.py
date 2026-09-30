@@ -190,6 +190,28 @@ async def create_plan(body: PlanCreate, user: User = Depends(get_current_user)) 
     return {"plan_id": plan_row_id, "job_id": job_id, "status": "pending", "job_ids": [job_id]}
 
 
+@router.post("/plans/{plan_id}/retry", response_model=PlanGenerateOut)
+async def retry_plan(plan_id: int, user: User = Depends(get_current_user)) -> dict:
+    """大纲生成失败后原参数重试,无需删除重建。"""
+    plan_row = await library_service.get_plan_by_id(plan_id, user_id=user.id)
+    if plan_row is None:
+        raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
+    async with pipeline.get_plan_lifecycle_lock(plan_row.ext_id):
+        async with session() as s:
+            fresh = await s.scalar(select(Plan).where(Plan.id == plan_id, Plan.user_id == user.id))
+            if fresh is None or fresh.status != "failed":
+                raise HTTPException(status_code=409, detail={
+                    "code": 409, "message": f"plan is {fresh.status if fresh else 'missing'}, retry not allowed"})
+            last = await s.scalar(select(Job).where(Job.kind == "plan", Job.ref_id == fresh.ext_id)
+                                  .order_by(Job.id.desc()).limit(1))
+            if last is None:
+                raise HTTPException(status_code=409, detail={"code": 409, "message": "找不到原始生成参数,请删除后重建"})
+            payload = json.loads(last.payload)
+            fresh.status = "generating"
+            await s.commit()
+        job_id = await pipeline.enqueue("plan", plan_row.ext_id, payload, user_id=user.id)
+    return {"plan_id": plan_id, "job_id": job_id, "status": "pending", "job_ids": [job_id]}
+
 @router.get("/plans")
 async def list_plans(user: User = Depends(get_current_user)) -> list[dict]:
     """计划列表(docs/02 §4);只含当前用户的计划。"""

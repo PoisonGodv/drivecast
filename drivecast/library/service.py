@@ -12,6 +12,7 @@ from ..db import session
 from ..models import (
     Audio,
     Episode,
+    Job,
     Plan,
     Question,
     ReviewReplay,
@@ -138,7 +139,17 @@ async def get_plan(plan_id: int, user_id: int | None = None) -> dict | None:
             .order_by(Episode.seq)
         )
         episodes = []
-        for ep, audio in result:
+        rows = list(result)
+        failed_refs = [ep.ext_id for ep, _ in rows if ep.status == "failed"]
+        last_errors: dict[str, str] = {}
+        if failed_refs:
+            for ref_id, error in (await s.execute(
+                select(Job.ref_id, Job.error)
+                .where(Job.ref_id.in_(failed_refs), Job.status == "failed")
+                .order_by(Job.id)
+            )).all():
+                last_errors[ref_id] = error or ""
+        for ep, audio in rows:
             path = Path(audio.file_path) if audio else None
             has_audio = bool(audio and path and path.exists() and path.stat().st_size > 0)
             # 审稿/人审徽章数据走文件态(docs/07 §3.1/§4),读不到不影响详情
@@ -159,6 +170,7 @@ async def get_plan(plan_id: int, user_id: int | None = None) -> dict | None:
                 ),
                 "review_pending_error": bool(review.get("pending_error")),
                 "human_qc_passed": (artifacts.load_human_qc(ep.ext_id) or {}).get("status") == "passed",
+                "error": last_errors.get(ep.ext_id, "")[:300],
             })
         ready_count = sum(1 for e in episodes if e["status"] == "ready")
         return {

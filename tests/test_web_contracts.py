@@ -238,6 +238,28 @@ class PlanLifecycleContractsTest(unittest.TestCase):
         async with db.session() as s:
             return await s.get(model, pk)
 
+    def test_failed_previous_episode_does_not_cascade(self) -> None:
+        from drivecast.jobs import worker
+
+        async def _run():
+            async with db.session() as s:
+                ep1 = await s.get(Episode, 1)
+                ep1.status = "failed"
+                s.add(Job(kind="script", ref_id="ep_c1", status="failed", error="ReviewBlocked: 硬伤",
+                          payload=json.dumps({"plan_id": "plan_cancel", "seq": 1})))
+                await s.commit()
+            return await worker._next_pending(("script",))
+
+        job = asyncio.run(_run())
+        self.assertIsNotNone(job)
+        self.assertEqual(job.ref_id, "ep_c2")
+        self.assertEqual(asyncio.run(self._row(Episode, 2)).status, "pending")
+
+        detail = self.client.get("/api/plans/1").json()
+        by_ext = {e["ext_id"]: e for e in detail["episodes"]}
+        self.assertEqual(by_ext["ep_c1"]["error"], "ReviewBlocked: 硬伤")
+        self.assertEqual(by_ext["ep_c2"]["error"], "")
+
     def test_delete_plan_permanently_removes_records_and_files(self) -> None:
         script_file = settings.script_path("ep_c1")
         script_file.parent.mkdir(parents=True, exist_ok=True)
@@ -522,6 +544,29 @@ class PlanAsyncCreateTest(unittest.TestCase):
         self.assertEqual(asyncio.run(worker._recover_stuck_generating()), 1)
         plan = asyncio.run(self._row(Plan, 1))
         self.assertEqual(plan.status, "failed")
+
+    def test_failed_plan_can_retry_with_original_payload(self) -> None:
+        from sqlalchemy import update
+
+        body = self._create()
+        self.assertEqual(self.client.post("/api/plans/1/retry").status_code, 409)
+
+        async def _fail() -> None:
+            async with db.session() as s:
+                await s.execute(update(Job).where(Job.id == body["job_id"])
+                                .values(status="failed", error="LLM down"))
+                await s.execute(update(Plan).where(Plan.id == 1).values(status="failed"))
+                await s.commit()
+
+        asyncio.run(_fail())
+        resp = self.client.post("/api/plans/1/retry")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        new_job = asyncio.run(self._row(Job, resp.json()["job_id"]))
+        old_job = asyncio.run(self._row(Job, body["job_id"]))
+        self.assertNotEqual(new_job.id, old_job.id)
+        self.assertEqual(new_job.status, "pending")
+        self.assertEqual(json.loads(new_job.payload), json.loads(old_job.payload))
+        self.assertEqual(asyncio.run(self._row(Plan, 1)).status, "generating")
 
 
 if __name__ == "__main__":

@@ -177,19 +177,13 @@ async def _next_pending(kinds=None, busy_plans=()) -> Job | None:
         for row in sorted(first_by_plan.values(), key=lambda j: j.id):
             if row.kind == "script":
                 payload = json.loads(row.payload)
+                # 前序集失败不阻塞:本集 S0 缺上集自测题时降级为无回顾开场
                 previous = list((await s.scalars(select(Job).where(
                     Job.kind == "script", Job.id != row.id,
-                    Job.status.in_(("pending", "running", "failed"))))).all())
-                blockers = [j for j in previous
-                            if json.loads(j.payload).get("plan_id") == payload.get("plan_id")
-                            and int(json.loads(j.payload).get("seq", 0)) < int(payload.get("seq", 0))]
-                if any(j.status in ("pending", "running") for j in blockers):
-                    continue
-                if any(not settings.script_path(j.ref_id).exists() for j in blockers):
-                    await s.execute(update(Job).where(Job.id == row.id, Job.status == "pending")
-                                    .values(status="failed", error="上集脚本未完成，无法生成回顾", updated_at=_now_text()))
-                    await s.commit()
-                    await set_episode_status(row.ref_id, "failed")
+                    Job.status.in_(("pending", "running"))))).all())
+                if any(json.loads(j.payload).get("plan_id") == payload.get("plan_id")
+                       and int(json.loads(j.payload).get("seq", 0)) < int(payload.get("seq", 0))
+                       for j in previous):
                     continue
             result = await s.execute(
                 update(Job).where(Job.id == row.id, Job.status == "pending")

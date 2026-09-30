@@ -8,10 +8,10 @@
 
 import { createApp, reactive } from '../vendor/petite-vue.js'
 import { getSession, isCurrentSession, onSessionChange, sessionTimeout } from './session.js'
-import { api, connectPlanEvents } from './api.js?v=20260914b'
-import { resetPlayer, player, loadEpisode, togglePlay, seek, seekToRatio, cycleRate, toggleTranscript, formatTime, nextEpisode, previousEpisode, dismissEndedPanel, replayFromEnded } from './player.js?v=20260914b'
-import { store } from './store.js?v=20260914b'
-import { useReview, isDue, formatDate, masteryLabels, directionNames } from './review.js?v=20260914b'
+import { api, connectPlanEvents } from './api.js?v=20260930a'
+import { resetPlayer, player, loadEpisode, togglePlay, seek, seekToRatio, cycleRate, toggleTranscript, formatTime, nextEpisode, previousEpisode, dismissEndedPanel, replayFromEnded } from './player.js?v=20260930a'
+import { store } from './store.js?v=20260930a'
+import { useReview, isDue, formatDate, masteryLabels, directionNames } from './review.js?v=20260930a'
 
 const DIRECTIONS = [
   { key: 'backend_arch', label: '后端/架构面试' },
@@ -419,6 +419,8 @@ const appState = reactive({
       sessionTimeout(() => {
         ep._highlight = false
       }, 3000)
+    } else if (data.status === 'failed' && !ep.error) {
+      this.refreshPlan(plan.id)
     }
   },
 
@@ -438,6 +440,37 @@ const appState = reactive({
       await api.generateEpisode(id)
       if (!isCurrentSession(session)) return
       this.showToast('已加入生成队列')
+    } catch (err) {
+      if (!isCurrentSession(session)) return
+      this.showToast(err.message)
+    }
+  },
+
+  async retryFailedEpisodes(plan) {
+    const session = getSession()
+    try {
+      await api.generatePlanAll(plan.id)
+      if (!isCurrentSession(session)) return
+      plan.episodes.forEach((e) => {
+        if (e.status === 'failed') {
+          e.status = 'pending'
+          e.error = ''
+        }
+      })
+      this.showToast('失败集已重新加入生成队列')
+    } catch (err) {
+      if (!isCurrentSession(session)) return
+      this.showToast(err.message)
+    }
+  },
+
+  async retryPlan(plan) {
+    const session = getSession()
+    try {
+      await api.retryPlan(plan.id)
+      if (!isCurrentSession(session)) return
+      plan.status = 'generating'
+      this.showToast('已重新生成大纲')
     } catch (err) {
       if (!isCurrentSession(session)) return
       this.showToast(err.message)

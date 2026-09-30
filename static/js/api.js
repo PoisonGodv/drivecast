@@ -11,7 +11,7 @@
  */
 
 import { getSession, assertSession, isCurrentSession } from './session.js'
-import { store } from './store.js?v=20260914b'
+import { store } from './store.js?v=20260930a'
 
 const API_BASE = '' // 同源，FastAPI StaticFiles 与 API 同 host
 const LOGIN_PATH = '/api/auth/login'
@@ -117,6 +117,13 @@ export const api = {
   // 单集生成与重试
   generateEpisode: (id) =>
     request(`/api/episodes/${id}/generate`, { method: 'POST' }),
+
+  // 批量重试:已就绪集只做本地音频升级,失败/未生成集重新入队
+  generatePlanAll: (id) =>
+    request(`/api/plans/${id}/generate_all`, { method: 'POST' }),
+
+  retryPlan: (id) =>
+    request(`/api/plans/${id}/retry`, { method: 'POST' }),
 
   // 勘误重生成(docs/07 §5):备份旧产物后重新入队
   regenerateEpisode: (id, reason = '') =>

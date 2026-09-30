@@ -136,8 +136,12 @@ def section_user(plan: PlanRec, ep: EpisodeRec, key: str, target_words: int, *,
 大纲:{ep.outline}
 方向侧重:{DIRECTION_HINTS.get(plan.direction, "")}(方向画像仅定风格,选题服从上面的主题红线)"""]
     if key == "S0":
-        recap = ("\n".join(f"- {q}" for q in recap_questions)
-                 if recap_questions else "(无,这是第 1 集,写 30 秒开场)")
+        if recap_questions:
+            recap = "\n".join(f"- {q}" for q in recap_questions)
+        elif ep.seq <= 1:
+            recap = "(无,这是第 1 集,写 30 秒开场)"
+        else:
+            recap = "(上集文稿暂缺,不做逐题回顾;用一两句话承接系列进度后直接写本集开场)"
         parts.append(f"上集留下的自测问题(逐题回顾并给参考要点):\n{recap}")
     if s2_grounding:
         parts.append(s2_grounding)
