@@ -73,7 +73,7 @@ python -m drivecast dbsync                  # 存量文件产物导入 SQLite
 .venv/bin/python -m pytest -q                    # 若已安装 pytest，可运行完整 Python 测试集
 ```
 
-**认证边界**：改密码不会撤销旧 JWT；默认有效期 7 天，紧急全量失效需轮换 `AUTH_SECRET` 并重启。音频/SSE URL 携带的仍是登录 JWT，不是短期资源 token；需要 TLS，并对代理/CDN/WAF 的 URL 日志独立脱敏。只信任明确代理 IP 的转发头，禁止 `FORWARDED_ALLOW_IPS=*`。无 TTY 建号时由秘密管理器向 CLI 子进程注入 `DRIVECAST_USER_PASSWORD`，不要把密码写进命令参数、仓库或日志。
+**认证边界**：登录后可在页头「修改密码」自助改密（新密码至少 8 位）；自助改密或 CLI `reset-password` 都会立即吊销该用户此前签发的全部 JWT（其他设备需重新登录，改密的当前页自动换新 token）。默认有效期 7 天，紧急全量失效仍可轮换 `AUTH_SECRET` 并重启。音频/SSE URL 携带的仍是登录 JWT，不是短期资源 token；需要 TLS，并对代理/CDN/WAF 的 URL 日志独立脱敏。只信任明确代理 IP 的转发头，禁止 `FORWARDED_ALLOW_IPS=*`。无 TTY 建号时由秘密管理器向 CLI 子进程注入 `DRIVECAST_USER_PASSWORD`，不要把密码写进命令参数、仓库或日志。
 
 ## 文档导航
 

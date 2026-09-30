@@ -210,7 +210,7 @@ async def cmd_create_user(args) -> None:
 
 
 async def cmd_reset_password(args) -> None:
-    """重置密码;旧 JWT 无撤销机制,自然过期前(最长 7 天)仍有效。"""
+    """重置密码并自增 token_version:该用户所有已签发 token 立即失效。"""
     from . import auth
     from .db import init_db
 
@@ -223,9 +223,10 @@ async def cmd_reset_password(args) -> None:
         if user is None:
             sys.exit(f"用户 '{args.username}' 不存在;可用 create-user 创建")
         user.password_hash = auth.hash_password(password)
+        user.token_version = User.token_version + 1
         await s.commit()
         print(f"密码已重置: id={user.id} username={user.username}")
-        print("提示:已签发的旧 token 在自然过期前(最长 7 天)仍然有效。")
+        print("该用户已签发的全部 token 已失效,各端需重新登录。")
 
 
 def main() -> None:

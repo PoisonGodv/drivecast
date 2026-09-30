@@ -95,6 +95,13 @@ export const api = {
 
   getAuthStatus: () => request('/api/auth/status'),
 
+  // 自助改密:成功回发新 token(旧 token 全部吊销)
+  changePassword: (oldPassword, newPassword) =>
+    request('/api/auth/password', {
+      method: 'POST',
+      body: { old_password: oldPassword, new_password: newPassword },
+    }),
+
   // 主题 / 计划
   createTopic: (title, direction) =>
     request('/api/topics', {

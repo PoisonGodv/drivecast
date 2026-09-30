@@ -396,7 +396,7 @@ class CliUserTest(unittest.TestCase):
 
         code, out = self._cli("reset-password", "admin", "--password", "new-pw-9")
         self.assertFalse(code, out)
-        self.assertIn("仍然有效", out)      # 提示旧 token 无撤销机制
+        self.assertIn("已失效", out)        # 重置即吊销旧 token
 
         self.assertEqual(self._login("admin", "whatever"), 401)  # 旧密码仍不行
         self.assertEqual(self._login("admin", "new-pw-9"), 200)
