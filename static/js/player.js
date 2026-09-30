@@ -7,8 +7,8 @@
 
 import { reactive } from '../vendor/petite-vue.js'
 import { getSession, isCurrentSession, onSessionChange } from './session.js'
-import { api, withToken } from './api.js?v=20260930c'
-import { store } from './store.js?v=20260930c'
+import { api, withToken } from './api.js?v=20260930d'
+import { store } from './store.js?v=20260930d'
 
 export const playbackRates = [0.75, 1, 1.25, 1.5, 2]
 

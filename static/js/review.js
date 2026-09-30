@@ -7,8 +7,8 @@
 
 import { reactive } from '../vendor/petite-vue.js'
 import { getSession, isCurrentSession, onSessionChange } from './session.js'
-import { store } from './store.js?v=20260930c'
-import { api } from './api.js?v=20260930c'
+import { store } from './store.js?v=20260930d'
+import { api } from './api.js?v=20260930d'
 
 const SPRINT_STORAGE_PREFIX = 'drivecast.review.sprint.completed.'
 

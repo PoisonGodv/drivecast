@@ -11,7 +11,7 @@
  */
 
 import { getSession, assertSession, isCurrentSession } from './session.js'
-import { store } from './store.js?v=20260930c'
+import { store } from './store.js?v=20260930d'
 
 const API_BASE = '' // 同源，FastAPI StaticFiles 与 API 同 host
 const LOGIN_PATH = '/api/auth/login'

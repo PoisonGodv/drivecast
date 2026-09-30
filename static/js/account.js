@@ -7,8 +7,8 @@
  */
 
 import { getSession, isCurrentSession } from './session.js'
-import { api } from './api.js?v=20260930c'
-import { store } from './store.js?v=20260930c'
+import { api } from './api.js?v=20260930d'
+import { store } from './store.js?v=20260930d'
 
 export const PASSWORD_MIN_LEN = 8
 
