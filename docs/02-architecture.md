@@ -106,8 +106,9 @@ CREATE TABLE plan (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   topic_id      INTEGER NOT NULL REFERENCES topic(id),
   title         TEXT NOT NULL,
-  status        TEXT NOT NULL DEFAULT 'draft', -- generating/active/done/failed/cancelled
-                                               -- generating=大纲异步生成中(占位),failed=大纲生成失败可删除重建
+  status        TEXT NOT NULL DEFAULT 'draft', -- generating/draft/active/done/failed/cancelled
+                                               -- generating=大纲异步生成中(占位),draft=大纲已出待用户确认(可删改,不写稿),
+                                               -- active=已确认开写,failed=大纲生成失败可重试/删除重建
   episode_count INTEGER NOT NULL DEFAULT 0,
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -197,7 +198,10 @@ CREATE INDEX idx_question_review ON question(next_review_at);
 | GET | `/api/plans/{id}` | 计划详情（含 episodes + 各集 status/进度） |
 | DELETE | `/api/plans/{id}` | 永久删除计划：中止当前执行任务、清除全部音频/脚本/自测题/复习记录与文件；幂等 |
 | POST | `/api/episodes/{id}/generate` | 触发该集 script+tts（入 job；计划非 active 返回 409） |
-| POST | `/api/plans/{id}/generate_all` | 整计划批量生成 |
+| POST | `/api/plans/{id}/generate_all` | 整计划批量生成（计划非 active 返回 409） |
+| GET | `/api/plans/{id}/outline` | 完整大纲（每集 id/seq/title/goal/outline/objectives） |
+| PATCH | `/api/plans/{id}/outline` | 仅 draft：改计划标题、逐集 title/goal/outline/objectives，`delete:[集id]` 删集（至少留 1 集，seq 连续重排，ext_id 不变）；非 draft 409 |
+| POST | `/api/plans/{id}/confirm` | 确认大纲：draft→active 并入队全部集 script job；非 draft（含已确认）409，重复点击不会重复入队 |
 | GET | `/api/jobs/{id}` | 任务状态查询（兜底;主推送走 SSE） |
 | GET | `/api/plans/{id}/events` | **SSE 生成进度推送**（主通道,协议见 04 §3） |
 | GET | `/api/episodes/{id}/script` | 取脚本文本（页面跟读） |
@@ -206,7 +210,7 @@ CREATE INDEX idx_question_review ON question(next_review_at);
 | GET | `/api/review/today` | 今日待复习题（next_review_at 到期） |
 | POST | `/api/questions/{id}/grade` | 复习自评（更新 mastery + 下次复习时间） |
 
-**示例：创建并生成计划**（只落 generating 占位 + plan job，立即返回；大纲由 worker 异步生成，完成后转正 active 并链式入队各集 script job；同主题 generating 期间重复提交幂等复用）
+**示例：创建并生成计划**（只落 generating 占位 + plan job，立即返回；大纲由 worker 异步生成，完成后转 draft 等用户确认，不自动写稿；用户 `POST /api/plans/{id}/confirm` 后才转 active 并入队各集 script job；同主题 generating 期间重复提交幂等复用）
 
 ```http
 POST /api/plans

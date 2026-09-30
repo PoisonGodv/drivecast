@@ -39,7 +39,7 @@ const GEN_STAGE_LABELS = {
 }
 
 const PLAN_STATUS_LABELS = {
-  draft: '草稿',
+  draft: '待确认大纲',
   generating: '大纲生成中',
   active: '进行中',
   done: '已完成',
@@ -89,6 +89,8 @@ const appState = reactive({
   planLoading: false,
   planError: '',
   sse: null,
+  outline: null, // draft 计划的可编辑大纲(GET /api/plans/:id/outline)
+  outlineBusy: false,
 
   // 播放器（单例状态）
   player: player.state,
@@ -444,6 +446,7 @@ const appState = reactive({
       const result = await api.getPlan(id)
       if (!isCurrentSession(session)) return
       this.plan = this.stampElapsed(result)
+      this.syncOutline(result)
       this.startPlanSSE(id)
     } catch (err) {
       if (!isCurrentSession(session)) return
@@ -461,6 +464,7 @@ const appState = reactive({
       const result = await api.getPlan(id)
       if (!isCurrentSession(session)) return
       this.plan = this.stampElapsed(result)
+      this.syncOutline(result)
     } catch (err) {
       if (!isCurrentSession(session)) return
       console.warn('刷新计划详情失败', err)
@@ -563,6 +567,84 @@ const appState = reactive({
     } catch (err) {
       if (!isCurrentSession(session)) return
       this.showToast(err.message)
+    }
+  },
+
+  /* ---------- 大纲确认(draft) ---------- */
+  /* 只有 draft 计划才拉可编辑大纲;其余状态清空,避免残留旧计划的编辑态 */
+  async syncOutline(plan) {
+    if (plan?.status !== 'draft') {
+      this.outline = null
+      return
+    }
+    const session = getSession()
+    try {
+      const outline = await api.getOutline(plan.id)
+      if (!isCurrentSession(session) || String(this.plan?.id) !== String(plan.id)) return
+      this.outline = outline
+    } catch (err) {
+      if (!isCurrentSession(session)) return
+      this.showToast(err.message)
+    }
+  },
+
+  async patchOutline(body) {
+    const session = getSession()
+    const planId = this.plan?.id
+    if (!planId || this.outlineBusy) return false
+    this.outlineBusy = true
+    try {
+      const outline = await api.patchOutline(planId, body)
+      if (!isCurrentSession(session)) return false
+      this.outline = outline
+      await this.refreshPlan(planId)
+      return true
+    } catch (err) {
+      if (!isCurrentSession(session)) return false
+      this.showToast(err.message)
+      this.syncOutline(this.plan) // 失败回滚到服务端版本
+      return false
+    } finally {
+      if (isCurrentSession(session)) this.outlineBusy = false
+    }
+  },
+
+  /* 输入框失焦/回车即保存单个字段;未改动不发请求 */
+  saveOutlineField(ep, field, value) {
+    const text = String(value ?? '').trim()
+    if (text === String(ep[field] ?? '').trim()) return
+    if (field === 'title' && !text) {
+      this.showToast('集标题不能为空')
+      this.syncOutline(this.plan)
+      return
+    }
+    return this.patchOutline({ episodes: [{ id: ep.id, [field]: text }] })
+  },
+
+  deleteOutlineEpisode(ep) {
+    if ((this.outline?.episodes?.length || 0) <= 1) {
+      this.showToast('至少保留 1 集')
+      return
+    }
+    if (!window.confirm(`删除第 ${ep.seq} 集「${ep.title}」？后续集序号会自动前移。`)) return
+    return this.patchOutline({ delete: [ep.id] })
+  },
+
+  async confirmOutline(plan) {
+    const session = getSession()
+    if (this.outlineBusy) return
+    this.outlineBusy = true
+    try {
+      await api.confirmOutline(plan.id)
+      if (!isCurrentSession(session)) return
+      this.showToast('大纲已确认，开始逐集生成')
+      await this.refreshPlan(plan.id)
+    } catch (err) {
+      if (!isCurrentSession(session)) return
+      this.showToast(err.message)
+      this.refreshPlan(plan.id)
+    } finally {
+      if (isCurrentSession(session)) this.outlineBusy = false
     }
   },
 

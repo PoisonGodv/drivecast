@@ -963,3 +963,60 @@
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* 大纲确认(draft 计划) */
+.badge-draft {
+  background: rgba(253, 214, 99, 0.18);
+  color: var(--warning);
+}
+
+.outline-editor > p {
+  margin-bottom: 12px;
+}
+
+.outline-item {
+  margin-bottom: 12px;
+}
+
+.outline-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.outline-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.outline-delete {
+  flex-shrink: 0;
+  color: var(--error);
+}
+
+.outline-label {
+  margin-top: 10px;
+}
+
+.outline-goal {
+  resize: vertical;
+}
+
+.outline-summary {
+  margin-top: 8px;
+  font-size: 0.9rem;
+}
+
+.outline-objectives {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.outline-confirm {
+  position: sticky;
+  bottom: 12px;
+  margin-top: 8px;
+}

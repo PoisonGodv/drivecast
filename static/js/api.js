@@ -137,6 +137,15 @@ export const api = {
   retryPlan: (id) =>
     request(`/api/plans/${id}/retry`, { method: 'POST' }),
 
+  // 大纲确认流:draft 期取完整大纲 / 删改 / 确认后开写
+  getOutline: (id) => request(`/api/plans/${id}/outline`),
+
+  patchOutline: (id, body) =>
+    request(`/api/plans/${id}/outline`, { method: 'PATCH', body }),
+
+  confirmOutline: (id) =>
+    request(`/api/plans/${id}/confirm`, { method: 'POST' }),
+
   // 勘误重生成(docs/07 §5):备份旧产物后重新入队
   regenerateEpisode: (id, reason = '') =>
     request(`/api/episodes/${id}/regenerate`, {

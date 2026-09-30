@@ -57,7 +57,8 @@
   │
   ▼ ① POST /api/topics → POST /api/plans (入 job: kind=plan)
 planner: LLM(schema=Plan) → 6 集递进大纲 → 落 plan/episode 表 + data/plans/{id}.json
-  │     用户在前端确认/删改大纲后锁定 (status: draft→active)
+  │     plan job 完成后停在 draft;用户在计划详情页删改大纲并点「确认大纲并开始生成」
+  │     (PATCH /api/plans/{id}/outline → POST /api/plans/{id}/confirm) 后锁定 (status: draft→active)
   ▼ ② 逐集入 job (kind=script)   —— 可单集也可 generate_all 批量
 scriptwriter: LLM(schema=ScriptOut)
   │   输入: 本集大纲 + 上集 3 个自测题(首集为空)

@@ -128,7 +128,7 @@ async def create_plan(body: PlanCreate, user: User = Depends(get_current_user)) 
     """由主题生成学习计划(docs/02 §4):落 generating 占位 + 入 plan job,立即返回。
 
     大模型出大纲真实耗时可达数分钟,同步等待会被浏览器/网关超时击杀;
-    大纲由 worker 异步生成,完成后占位行转正 active 并链式入队各集 script job,
+    大纲由 worker 异步生成,完成后占位行转 draft 待用户确认(api_outline),确认后才入队写稿,
     进度由 SSE 推送(docs/04 §3)。topic/占位 plan/job 全部写入当前用户归属。
     """
     async with session() as s:

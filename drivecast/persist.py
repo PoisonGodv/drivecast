@@ -75,9 +75,10 @@ async def upsert_plan(plan: PlanRec, user_id: int | None = None) -> None:
         else:
             plan_id_db = plan_row.id
             values: dict = {"title": plan.title, "episode_count": len(plan.episodes)}
-            # 异步创建的 generating 占位行在此转正;cancelled 等终态绝不回捞
+            # 异步创建的 generating 占位行在此转 draft,待用户确认大纲后才转 active 开写;
+            # cancelled 等终态绝不回捞
             if plan_row.status == "generating":
-                values["status"] = "active"
+                values["status"] = "draft"
             await s.execute(update(Plan).where(Plan.id == plan_id_db).values(**values))
 
         for ep in plan.episodes:
