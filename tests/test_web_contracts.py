@@ -419,7 +419,7 @@ class PlanLifecycleContractsTest(unittest.TestCase):
 
 
 class PlanAsyncCreateTest(unittest.TestCase):
-    """创建计划异步化契约:接口只落 generating 占位 + plan job,worker 消费后转正并链式入队。"""
+    """创建计划异步化契约:接口只落 generating 占位 + plan job,worker 消费后停在 draft 待确认。"""
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -484,7 +484,7 @@ class PlanAsyncCreateTest(unittest.TestCase):
         self.assertEqual(again["plan_id"], body["plan_id"])
         self.assertEqual(again["job_id"], body["job_id"])
 
-    def test_worker_plan_job_generates_outline_and_chains_episode_jobs(self) -> None:
+    def test_worker_plan_job_generates_outline_and_waits_for_confirm(self) -> None:
         from drivecast.jobs import worker
         from drivecast.llm.provider import LLMResult
         from drivecast.schemas import EpisodeOutline, PlanOut
@@ -511,7 +511,7 @@ class PlanAsyncCreateTest(unittest.TestCase):
             asyncio.run(_run())
 
         plan = asyncio.run(self._row(Plan, 1))
-        self.assertEqual(plan.status, "active")
+        self.assertEqual(plan.status, "draft")
         self.assertEqual(plan.title, "异步大纲")
         self.assertEqual(plan.episode_count, 2)
         self.assertTrue(settings.plan_path(plan.ext_id).exists())
@@ -522,6 +522,14 @@ class PlanAsyncCreateTest(unittest.TestCase):
         job = asyncio.run(self._row(Job, body["job_id"]))
         self.assertEqual(job.status, "done")
 
+        # 大纲未确认前不得入队任何写稿任务
+        jobs = asyncio.run(self._rows(Job))
+        self.assertEqual([j for j in jobs if j.kind == "script"], [])
+
+        res = self.client.post("/api/plans/1/confirm")
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(len(res.json()["job_ids"]), 2)
+        self.assertEqual(asyncio.run(self._row(Plan, 1)).status, "active")
         jobs = asyncio.run(self._rows(Job))
         script_jobs = [j for j in jobs if j.kind == "script"]
         self.assertEqual(len(script_jobs), 2)

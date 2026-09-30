@@ -460,3 +460,47 @@ test('cancel regenerate sends no request while confirmed empty reason is allowed
   assert.equal(b.calls.length, 1)
   assert.equal(JSON.parse(b.calls[0].init.body).reason, '')
 })
+
+test('draft plan loads editable outline, edits/deletes via PATCH and confirms once', async () => {
+  const b = await browser()
+  b.login()
+  const draft = { id: 5, title: 'D', status: 'draft', episodes: [{ id: 51, seq: 1, status: 'pending' }, { id: 52, seq: 2, status: 'pending' }] }
+  const outline = { plan_id: 5, status: 'draft', episodes: [{ id: 51, seq: 1, title: 'one', goal: 'g1' }, { id: 52, seq: 2, title: 'two', goal: 'g2' }] }
+  b.fetchWith(async (url, init) => {
+    if (url === '/api/plans/5/outline' && init.method === 'PATCH') {
+      const removed = JSON.parse(init.body).delete || []
+      return response({ ...outline, episodes: outline.episodes.filter((e) => !removed.includes(e.id)) })
+    }
+    if (url === '/api/plans/5/outline') return response(outline)
+    if (url === '/api/plans/5/confirm') return response({ plan_id: 5, status: 'active', job_ids: [1] })
+    return response(draft)
+  })
+  b.app.route = 'plan'
+  await b.app.loadPlan(5)
+  await tick()
+  assert.equal(b.app.planStatusLabel(draft), '待确认大纲')
+  assert.equal(b.app.outline.episodes.length, 2)
+  // 未改动不发请求
+  const before = b.calls.length
+  b.app.saveOutlineField(b.app.outline.episodes[0], 'title', ' one ')
+  assert.equal(b.calls.length, before)
+  await b.app.saveOutlineField(b.app.outline.episodes[0], 'goal', 'new goal')
+  const patch = b.calls.find((c) => c.init?.method === 'PATCH')
+  assert.deepEqual(JSON.parse(patch.init.body), { episodes: [{ id: 51, goal: 'new goal' }] })
+  b.window.confirm = () => true
+  await b.app.deleteOutlineEpisode(b.app.outline.episodes[0])
+  const lastPatch = b.calls.filter((c) => c.init?.method === 'PATCH').at(-1)
+  assert.deepEqual(JSON.parse(lastPatch.init.body), { delete: [51] })
+  // 只剩 1 集时不允许再删
+  b.fetchWith(async () => { throw new Error('must not request') })
+  await b.app.deleteOutlineEpisode(b.app.outline.episodes[0])
+  b.fetchWith(async (url) => url === '/api/plans/5/confirm'
+    ? response({ plan_id: 5, status: 'active', job_ids: [1] })
+    : response({ ...draft, status: 'active' }))
+  await b.app.confirmOutline(draft)
+  assert.equal(b.calls.filter((c) => c.url === '/api/plans/5/confirm').length, 1)
+  assert.equal(b.app.plan.status, 'active')
+  assert.equal(b.app.outline, null)
+  b.app.logout()
+  assertClean(b)
+})

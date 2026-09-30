@@ -76,8 +76,12 @@ def _now_text() -> str:
     return datetime.now().isoformat(sep=" ", timespec="seconds")
 
 
+# draft = 大纲已出待用户确认:不写稿,但删除/孤儿复位/SSE 都按存活处理
+_ALIVE_PLAN_STATUSES = ("active", "generating", "draft")
+
+
 async def _alive_ref_ids(s) -> list[str]:
-    """存活计划可复位的 job ref_id 全集:active 计划的集 ext_id + 存活计划的 plan ext_id。
+    """存活计划可复位的 job ref_id 全集:active 计划的集 ext_id + 存活计划(含 draft)的 plan ext_id。
 
     大纲生成 job(kind=plan)以计划 ext_id 为 ref_id,只数集 ext_id 会漏掉它,
     进程崩溃后该 running 将永久挂死(generating 占位计划还没有任何集)。
@@ -90,7 +94,7 @@ async def _alive_ref_ids(s) -> list[str]:
         )
     ).scalars().all()
     alive_plan_ext_ids = (
-        await s.execute(select(Plan.ext_id).where(Plan.status.in_(("active", "generating"))))
+        await s.execute(select(Plan.ext_id).where(Plan.status.in_(_ALIVE_PLAN_STATUSES)))
     ).scalars().all()
     return list(active_plan_ep_ext_ids) + list(alive_plan_ext_ids)
 
@@ -209,12 +213,12 @@ async def _finish(job_id: int, status: str, error: str = "") -> bool:
 
 
 async def _plan_alive(plan_ext_id: str) -> bool:
-    """计划存在且存活返回 True(active/generating);其余(cancelled/不存在)返回 False。"""
+    """计划存在且存活返回 True(active/generating/draft);其余(cancelled/不存在)返回 False。"""
     if not plan_ext_id:
         return False
     async with session() as s:
         status = await s.scalar(select(Plan.status).where(Plan.ext_id == plan_ext_id))
-    return status in ("active", "generating")
+    return status in _ALIVE_PLAN_STATUSES
 
 
 async def _plan_generating(plan_ext_id: str) -> bool:
@@ -243,23 +247,20 @@ async def _retry_or_fail(job: Job, exc: BaseException) -> None:
 
 
 async def _run_plan_job(job: Job) -> None:
-    """计划大纲生成(docs/02 §4 kind=plan):LLM 出大纲 → 占位行转正 active → 链式入队各集 script。
+    """计划大纲生成(docs/02 §4 kind=plan):LLM 出大纲 → 占位行转 draft,等用户确认后才入队写稿。
 
     执行前/落库后都校验占位态:生成期间计划被删除时直接丢弃产出,防止删后复活。
     """
     payload = json.loads(job.payload)
     plan_ext_id = payload["plan_id"]
     if not await _plan_generating(plan_ext_id):
-        # 大纲已落库但链式入队中断：幂等补齐，不重新请求 LLM。
+        # 大纲已落库(draft/已确认 active):收尾即可,不重新请求 LLM,也不越过确认自行入队。
         if await _plan_alive(plan_ext_id):
-            from .pipeline import enqueue_plan_all
-            plan_rec = planner.load_plan(plan_ext_id)
-            await enqueue_plan_all(plan_rec, user_id=job.user_id)
             await _finish(job.id, "done")
         else:
             await _finish(job.id, "cancelled", "plan not generating")
         return
-    plan_rec = await planner.create_plan(
+    await planner.create_plan(
         payload["topic"], direction=payload["direction"],
         episode_count=payload.get("episode_count"), target_minutes=payload.get("target_minutes"),
         plan_id=plan_ext_id, user_id=job.user_id,
@@ -268,9 +269,7 @@ async def _run_plan_job(job: Job) -> None:
         settings.plan_path(plan_ext_id).unlink(missing_ok=True)
         await _finish(job.id, "cancelled", "plan deleted during generation")
         return
-    from .pipeline import enqueue_plan_all
-    # 链式入队继承父 job 归属:各集 script job 的 user_id 与计划属主一致
-    await enqueue_plan_all(plan_rec, user_id=job.user_id)
+    # 停在 draft:写稿由 POST /api/plans/{id}/confirm 触发(docs/04 §1.2)
     await _finish(job.id, "done")
 
 

@@ -93,6 +93,7 @@
               <a :href="'#/plan/' + plan.id" class="card-title card-title-link">{{ plan.title }}</a>
               <div class="card-meta">
                 <template v-if="plan.status === 'generating'">大纲生成中，通常需要 1~5 分钟</template>
+                <template v-else-if="plan.status === 'draft'"><span class="badge badge-draft">待确认大纲</span> 共 {{ planProgress(plan).total }} 集，确认后开始生成</template>
                 <template v-else-if="plan.status === 'failed'">大纲生成失败，可进入计划重试</template>
                 <template v-else>{{ planProgress(plan).ready }}/{{ planProgress(plan).total }} 集已就绪
                 · 已听 {{ listenedCount(plan) }} 集
@@ -107,7 +108,7 @@
               ></div>
             </div>
             <button @click="continuePlan(plan)" class="btn btn-primary btn-lg btn-block">
-              {{ planProgress(plan).ready > 0 ? '继续听' : '查看进度' }}
+              {{ plan.status === 'draft' ? '查看并确认大纲' : planProgress(plan).ready > 0 ? '继续听' : '查看进度' }}
             </button>
             <button
               @click="deletePlan(plan)"
@@ -200,10 +201,10 @@
               style="color: var(--error);"
             >{{ String(deletingPlanId) === String(plan.id) ? '删除中…' : '删除计划' }}</button>
           </div>
-          <div class="card-meta" style="margin-bottom: 8px;">
+          <div v-if="plan.status !== 'draft'" class="card-meta" style="margin-bottom: 8px;">
             {{ planProgress(plan).ready }}/{{ planProgress(plan).total }} 集已就绪
           </div>
-          <div class="progress-bar" style="margin-bottom: 24px;">
+          <div v-if="plan.status !== 'draft'" class="progress-bar" style="margin-bottom: 24px;">
             <div
               class="fill"
               :class="{ success: planProgress(plan).percent === 100 }"
@@ -219,6 +220,54 @@
             <button class="btn btn-primary" @click="retryPlan(plan)">重试生成大纲</button>
           </div>
 
+          <!-- 大纲确认(draft):逐集改标题/目标、删集,确认后才开始写稿 -->
+          <div v-if="plan.status === 'draft'" class="outline-editor">
+            <p class="text-muted">大纲已生成。可直接修改每集标题与目标、删除不需要的集，确认后才开始逐集生成。</p>
+            <div v-if="!outline" class="loading">加载大纲…</div>
+            <template v-else>
+              <div v-for="ep in outline.episodes" :key="ep.id" class="card outline-item">
+                <div class="outline-head">
+                  <span class="episode-seq">{{ ep.seq }}</span>
+                  <input
+                    class="form-input outline-title"
+                    :value="ep.title"
+                    :disabled="outlineBusy"
+                    maxlength="200"
+                    aria-label="集标题"
+                    @change="saveOutlineField(ep, 'title', $event.target.value)"
+                    @keydown.enter="$event.target.blur()"
+                  >
+                  <button
+                    class="btn btn-ghost outline-delete"
+                    :disabled="outlineBusy || outline.episodes.length <= 1"
+                    :aria-label="'删除第 ' + ep.seq + ' 集'"
+                    title="删除本集"
+                    @click="deleteOutlineEpisode(ep)"
+                  >✕</button>
+                </div>
+                <label class="form-label outline-label">本集目标</label>
+                <textarea
+                  class="form-input outline-goal"
+                  rows="2"
+                  :value="ep.goal"
+                  :disabled="outlineBusy"
+                  maxlength="500"
+                  aria-label="本集目标"
+                  @change="saveOutlineField(ep, 'goal', $event.target.value)"
+                ></textarea>
+                <div v-if="ep.outline" class="text-muted outline-summary">{{ ep.outline }}</div>
+                <div v-if="ep.objectives && ep.objectives.length" class="outline-objectives">
+                  <span v-for="o in ep.objectives" class="due-chip">{{ o }}</span>
+                </div>
+              </div>
+            </template>
+            <button
+              class="btn btn-primary btn-lg btn-block outline-confirm"
+              :disabled="outlineBusy || !outline"
+              @click="confirmOutline(plan)"
+            >{{ outlineBusy ? '处理中…' : '确认大纲并开始生成' }}</button>
+          </div>
+
           <div
             v-if="plan.status === 'active' && plan.episodes && plan.episodes.some((e) => e.status === 'failed')"
             style="margin-bottom: 16px;"
@@ -228,7 +277,7 @@
             </button>
           </div>
 
-          <div class="episode-list">
+          <div v-if="plan.status !== 'draft'" class="episode-list">
             <div
               v-for="ep in plan.episodes"
               :key="ep.id"
