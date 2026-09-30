@@ -149,6 +149,7 @@ async def get_plan(plan_id: int, user_id: int | None = None) -> dict | None:
                 .order_by(Job.id)
             )).all():
                 last_errors[ref_id] = error or ""
+        active_jobs = await _active_jobs(s, [ep.ext_id for ep, _ in rows if ep.status != "ready"])
         for ep, audio in rows:
             path = Path(audio.file_path) if audio else None
             has_audio = bool(audio and path and path.exists() and path.stat().st_size > 0)
@@ -171,6 +172,7 @@ async def get_plan(plan_id: int, user_id: int | None = None) -> dict | None:
                 "review_pending_error": bool(review.get("pending_error")),
                 "human_qc_passed": (artifacts.load_human_qc(ep.ext_id) or {}).get("status") == "passed",
                 "error": last_errors.get(ep.ext_id, "")[:300],
+                **_progress(ep.ext_id, active_jobs.get(ep.ext_id)),
             })
         ready_count = sum(1 for e in episodes if e["status"] == "ready")
         return {
@@ -182,6 +184,50 @@ async def get_plan(plan_id: int, user_id: int | None = None) -> dict | None:
             "ready_count": ready_count,
             "episodes": episodes,
         }
+
+
+_GEN_KINDS = ("script", "tts", "audio_upgrade", "quality_recheck")
+_STAGE_OF_KIND = {"script": "writing", "tts": "synthesizing",
+                  "audio_upgrade": "postprocessing", "quality_recheck": "postprocessing"}
+
+
+async def _active_jobs(s, ref_ids: list[str]) -> dict[str, Job]:
+    """每集最新一个 pending/running 的生成 job(无则缺省)。"""
+    if not ref_ids:
+        return {}
+    rows = (await s.scalars(
+        select(Job).where(Job.ref_id.in_(ref_ids), Job.kind.in_(_GEN_KINDS),
+                          Job.status.in_(("pending", "running")))
+        .order_by(Job.id)
+    )).all()
+    return {job.ref_id: job for job in rows}
+
+
+def _progress(ep_ext_id: str, job: Job | None) -> dict:
+    """生成中集的展示态:阶段 / 已用秒数 / 段或 chunk 级细进度(取不到为 None)。"""
+    if job is None:
+        return {"stage": None, "elapsed_sec": None, "progress": None}
+    if job.status == "pending":
+        return {"stage": "queued", "elapsed_sec": None, "progress": None}
+    from ..config import settings
+    try:
+        started = datetime.fromisoformat(job.updated_at)
+        elapsed = max(0, int((datetime.now() - started).total_seconds()))
+    except (TypeError, ValueError):
+        elapsed = None
+    progress = None
+    try:
+        if job.kind == "script":
+            draft = json.loads(settings.script_draft_path(ep_ext_id).read_text("utf-8"))
+            progress = {"done": len(draft.get("sections") or {}), "total": 5, "unit": "段"}
+        elif job.kind == "tts":
+            total = len(json.loads(settings.tts_path(ep_ext_id).read_text("utf-8")).get("chunks") or [])
+            done = len(list(settings.chunks_dir(ep_ext_id).glob("[0-9][0-9][0-9].mp3")))
+            if total:
+                progress = {"done": min(done, total), "total": total, "unit": "片"}
+    except (OSError, ValueError):
+        progress = None
+    return {"stage": _STAGE_OF_KIND.get(job.kind, "writing"), "elapsed_sec": elapsed, "progress": progress}
 
 
 async def get_episode(episode_id: int, user_id: int | None = None) -> Episode | None:

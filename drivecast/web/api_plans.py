@@ -419,6 +419,9 @@ async def get_script(episode_id: int, user: User = Depends(get_current_user)) ->
 
 # ---------- SSE ----------
 
+# 进程收到退出信号时置位:SSE 长轮询立即收尾,不必等到优雅关停超时被强杀
+server_stopping = asyncio.Event()
+
 _STAGE_PERCENT = {
     "pending": ("outline", "pending", 0),
     "scripted": ("script", "done", 40),
@@ -441,6 +444,10 @@ def _episode_event(ep: dict) -> dict:
         # 始终保留规范的 DB 状态,防止前端被展示态(done/generating)覆盖
         "status": ep["status"],
         "percent": percent,
+        # 生成中细粒度展示:queued/writing/synthesizing/postprocessing;elapsed 为本阶段已用秒数
+        "gen_stage": ep.get("stage"),
+        "elapsed_sec": ep.get("elapsed_sec"),
+        "progress": ep.get("progress"),
     }
     if ep["status"] == "ready":
         event["audio_url"] = f"/api/episodes/{ep['id']}/audio"
@@ -454,23 +461,23 @@ async def _plan_events(plan_id: int, user_id: int):
     轮询每次都带 user_id 重新校验归属:跨用户/不存在统一推 not_found,不泄露存在性。
     """
     poll = 2.0  # 简单可靠,不额外依赖
-    last_statuses: dict[int, str] = {}
+    last_statuses: dict[int, tuple] = {}
     last_plan_key: tuple[str, int, int, bool] | None = None
     try:
         yield f"retry: 3000\n\n"
-        while True:
+        while not server_stopping.is_set():
             detail = await library_service.get_plan(plan_id, user_id=user_id)
             if detail is None:
                 yield f"event: plan_status\ndata: {json.dumps({'plan_id': plan_id, 'ext_id': '', 'status': 'not_found', 'ready': 0, 'total': 0, 'all_done': False, 'error': 'not_found'})}\n\n"
                 break
 
-            # episode 状态变化时推 episode_status
+            # episode 状态/阶段/细进度变化时推 episode_status(已用时长由前端本地累加,不逐秒推)
             for ep in detail["episodes"]:
-                prev = last_statuses.get(ep["id"])
-                if prev != ep["status"]:
+                sig = (ep["status"], ep.get("stage"), json.dumps(ep.get("progress"), sort_keys=True))
+                if last_statuses.get(ep["id"]) != sig:
                     event = _episode_event(ep)
                     yield f"event: episode_status\ndata: {json.dumps(event)}\n\n"
-                    last_statuses[ep["id"]] = ep["status"]
+                    last_statuses[ep["id"]] = sig
 
             # plan 总进度或状态变化时推 plan_status
             plan_status = detail.get("status", "active")
@@ -485,7 +492,10 @@ async def _plan_events(plan_id: int, user_id: int):
                 )
                 last_plan_key = key
 
-            await asyncio.sleep(poll)
+            try:
+                await asyncio.wait_for(server_stopping.wait(), timeout=poll)
+            except asyncio.TimeoutError:
+                pass
     except asyncio.CancelledError:
         # 客户端断开,优雅结束 generator
         raise

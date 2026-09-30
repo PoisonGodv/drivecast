@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from ..auth import DUMMY_HASH, create_token, get_current_user, verify_password
+from ..auth import DUMMY_HASH, create_token, get_current_user, login_ready_usernames, verify_password
 from ..db import session
 from ..models import User
 
@@ -163,6 +163,12 @@ async def _verify_login(body: LoginIn, key: str) -> User | None:
     finally:
         # DB/验证异常也按失败收尾,不能留下永久占用,也不能免费重试。
         _finish_login(key, success=success)
+
+
+@router.get("/status")
+async def auth_status() -> dict:
+    """匿名可达:只回答「是否已有可登录账号」,供登录页给出首次启动引导,不暴露用户名。"""
+    return {"setup_required": not await login_ready_usernames()}
 
 
 @router.get("/me")

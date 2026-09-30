@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from ..auth import get_current_user
+from ..auth import get_current_user, login_ready_usernames
 from ..config import ensure_data_dirs, settings
 from ..db import close_db, init_db
 from ..jobs import worker
@@ -46,6 +46,12 @@ async def lifespan(app: FastAPI):
     global _worker_task
     ensure_data_dirs()
     await init_db()
+    if not await login_ready_usernames():
+        print(
+            "[auth] 还没有可登录的账号(admin 仍是锁定占位)。请先执行:\n"
+            "  .venv/bin/python -m drivecast reset-password admin",
+            file=sys.stderr,
+        )
 
     # 维护/验收可通过 WORKER_ENABLED=false 禁止消费昂贵任务。
     if settings.worker_enabled:

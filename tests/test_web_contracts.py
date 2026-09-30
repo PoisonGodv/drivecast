@@ -260,6 +260,49 @@ class PlanLifecycleContractsTest(unittest.TestCase):
         self.assertEqual(by_ext["ep_c1"]["error"], "ReviewBlocked: 硬伤")
         self.assertEqual(by_ext["ep_c2"]["error"], "")
 
+    def test_restart_refunds_attempt_of_orphaned_running_job(self) -> None:
+        from sqlalchemy import update
+
+        from drivecast.jobs import worker
+
+        async def _run():
+            async with db.session() as s:
+                await s.execute(update(Job).where(Job.id == 1).values(status="running", attempt=2))
+                await s.commit()
+            await worker._rescan_orphans()
+
+        asyncio.run(_run())
+        job = asyncio.run(self._row(Job, 1))
+        self.assertEqual((job.status, job.attempt), ("pending", 1))
+
+    def test_plan_detail_reports_writing_stage_elapsed_and_section_progress(self) -> None:
+        from datetime import datetime, timedelta
+
+        from sqlalchemy import update
+
+        started = (datetime.now() - timedelta(seconds=95)).isoformat(sep=" ", timespec="seconds")
+
+        async def _running():
+            async with db.session() as s:
+                await s.execute(update(Job).where(Job.id == 1)
+                                .values(status="running", attempt=1, updated_at=started))
+                await s.commit()
+
+        detail = self.client.get("/api/plans/1").json()
+        ep2 = next(e for e in detail["episodes"] if e["ext_id"] == "ep_c2")
+        self.assertEqual((ep2["stage"], ep2["elapsed_sec"]), ("queued", None))
+        ep1 = next(e for e in detail["episodes"] if e["ext_id"] == "ep_c1")
+        self.assertIsNone(ep1["stage"])  # 已就绪集无生成阶段
+
+        asyncio.run(_running())
+        draft = settings.script_draft_path("ep_c2")
+        draft.parent.mkdir(parents=True, exist_ok=True)
+        draft.write_text(json.dumps({"sections": {"S0": {}, "S1": {}}}), "utf-8")
+        ep2 = next(e for e in self.client.get("/api/plans/1").json()["episodes"] if e["ext_id"] == "ep_c2")
+        self.assertEqual(ep2["stage"], "writing")
+        self.assertGreaterEqual(ep2["elapsed_sec"], 95)
+        self.assertEqual(ep2["progress"], {"done": 2, "total": 5, "unit": "段"})
+
     def test_delete_plan_permanently_removes_records_and_files(self) -> None:
         script_file = settings.script_path("ep_c1")
         script_file.parent.mkdir(parents=True, exist_ok=True)

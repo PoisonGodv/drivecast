@@ -102,6 +102,32 @@ class AuthApiTest(unittest.TestCase):
             ))
             await s.commit()
 
+    # ---------- 首次启动引导 / 密钥守卫 ----------
+
+    def test_auth_status_reports_setup_required_only_without_loginable_user(self) -> None:
+        res = self.client.get("/api/auth/status")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json(), {"setup_required": False})  # alice 已有真实密码
+
+        async def _lock_all() -> None:
+            async with db.session() as s:
+                for user in (await s.scalars(select(User))).all():
+                    user.password_hash = LOCKED_HASH
+                await s.commit()
+
+        asyncio.run(_lock_all())
+        self.assertEqual(self.client.get("/api/auth/status").json(), {"setup_required": True})
+
+    def test_non_loopback_host_requires_auth_secret(self) -> None:
+        from drivecast.auth import check_auth_secret_for_host
+
+        with mock.patch.object(settings, "auth_secret", ""):
+            for host in ("127.0.0.1", "localhost", "::1"):
+                check_auth_secret_for_host(host)
+            with self.assertRaises(RuntimeError):
+                check_auth_secret_for_host("0.0.0.0")
+        check_auth_secret_for_host("0.0.0.0")  # real_auth_scope 已配置密钥
+
     # ---------- login ----------
 
     def test_login_success_returns_usable_token(self) -> None:

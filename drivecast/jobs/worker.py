@@ -13,7 +13,7 @@ import time
 import traceback
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from ..config import settings
 from ..db import close_db, session
@@ -96,14 +96,17 @@ async def _alive_ref_ids(s) -> list[str]:
 
 
 async def _rescan_orphans() -> int:
-    """启动恢复:只复位仍属于存活计划的 running job 为 pending。"""
+    """启动恢复:只复位仍属于存活计划的 running job 为 pending。
+
+    进程被杀/重启不是 job 自身失败,退还本次 attempt,避免频繁重启把健康任务耗到 failed。
+    """
     async with session() as s:
         ref_ids = await _alive_ref_ids(s)
         if not ref_ids:
             return 0
         result = await s.execute(
             update(Job).where(Job.status == "running", Job.ref_id.in_(ref_ids))
-            .values(status="pending", updated_at=_now_text())
+            .values(status="pending", attempt=func.max(Job.attempt - 1, 0), updated_at=_now_text())
         )
         await s.commit()
         return result.rowcount

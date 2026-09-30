@@ -37,6 +37,25 @@ _QUERY_TOKEN_PATHS = re.compile(r"^/api/(plans/\d+/events|episodes/\d+/audio(/do
 
 _random_secret: str | None = None
 
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def check_auth_secret_for_host(host: str) -> None:
+    """非本机监听却没配 AUTH_SECRET:拒绝启动(每次重启全员被踢,且多进程间 token 互不认)。"""
+    if settings.auth_secret.strip() or host in _LOOPBACK_HOSTS:
+        return
+    raise RuntimeError(
+        f"WEB_HOST={host} 对外监听但未配置 AUTH_SECRET。请在 .env 设置:\n"
+        "  AUTH_SECRET=$(python -c \"import secrets; print(secrets.token_hex(32))\")"
+    )
+
+
+async def login_ready_usernames() -> list[str]:
+    """可登录(已设真实密码)的用户名;为空说明需要先 reset-password。"""
+    async with session() as s:
+        rows = (await s.execute(select(User.username, User.password_hash))).all()
+    return [name for name, pw in rows if pw and pw.startswith("pbkdf2_sha256$")]
+
 
 # ---------- 密码哈希 ----------
 

@@ -8,10 +8,10 @@
 
 import { createApp, reactive } from '../vendor/petite-vue.js'
 import { getSession, isCurrentSession, onSessionChange, sessionTimeout } from './session.js'
-import { api, connectPlanEvents } from './api.js?v=20260930b'
-import { resetPlayer, player, loadEpisode, togglePlay, seek, seekToRatio, cycleRate, toggleTranscript, formatTime, nextEpisode, previousEpisode, dismissEndedPanel, replayFromEnded } from './player.js?v=20260930b'
-import { store } from './store.js?v=20260930b'
-import { useReview, isDue, formatDate, masteryLabels, directionNames } from './review.js?v=20260930b'
+import { api, connectPlanEvents } from './api.js?v=20260930c'
+import { resetPlayer, player, loadEpisode, togglePlay, seek, seekToRatio, cycleRate, toggleTranscript, formatTime, nextEpisode, previousEpisode, dismissEndedPanel, replayFromEnded } from './player.js?v=20260930c'
+import { store } from './store.js?v=20260930c'
+import { useReview, isDue, formatDate, masteryLabels, directionNames } from './review.js?v=20260930c'
 
 const DIRECTIONS = [
   { key: 'backend_arch', label: '后端/架构面试' },
@@ -28,6 +28,13 @@ const STATUS_LABELS = {
   ready: '可播放',
   failed: '失败',
   cancelled: '已取消',
+}
+
+const GEN_STAGE_LABELS = {
+  queued: '排队中',
+  writing: '写稿中',
+  synthesizing: '合成语音中',
+  postprocessing: '音频处理中',
 }
 
 const PLAN_STATUS_LABELS = {
@@ -53,6 +60,9 @@ const appState = reactive({
   loginForm: { username: store.getUsername(), password: '' },
   loggingIn: false,
   loginError: '',
+  setupRequired: false, // 库里还没有可登录账号:登录页给出 reset-password 引导
+  nowTick: Date.now(),
+  _clockScheduled: false,
 
   // 首页
   plans: [],
@@ -204,6 +214,13 @@ const appState = reactive({
 
     this.authReady = false
     this.applyRoute()
+    if (!this.authed) {
+      api.getAuthStatus()
+        .then((s) => {
+          if (isCurrentSession(session)) this.setupRequired = Boolean(s?.setup_required)
+        })
+        .catch(() => {})
+    }
   },
 
   async submitLogin() {
@@ -268,6 +285,44 @@ const appState = reactive({
     const total = plan?.episodes?.length || 0
     const ready = plan?.episodes?.filter((e) => e.status === 'ready').length || 0
     return { ready, total, percent: total ? Math.round((ready / total) * 100) : 0 }
+  },
+
+  /* 生成中集的阶段文案:"写稿中 · 3/5 段 · 已用 4:12" */
+  episodeStageText(ep) {
+    const label = GEN_STAGE_LABELS[ep.stage]
+    if (!label) return ''
+    const parts = [label]
+    if (ep.progress?.total) parts.push(`${ep.progress.done}/${ep.progress.total} ${ep.progress.unit}`)
+    if (ep.elapsed_sec != null && ep._elapsedAt) {
+      const sec = ep.elapsed_sec + Math.max(0, Math.floor((this.nowTick - ep._elapsedAt) / 1000))
+      parts.push(`已用 ${formatTime(sec)}`)
+    }
+    return parts.join(' · ')
+  },
+
+  stampElapsed(plan) {
+    const now = Date.now()
+    plan?.episodes?.forEach((e) => {
+      e._elapsedAt = e.elapsed_sec != null ? now : 0
+    })
+    this.ensureElapsedClock()
+    return plan
+  },
+
+  /* 已用时长本地逐秒累加:只在计划页有生成中集时挂 1s 定时器,随会话自动撤销 */
+  ensureElapsedClock() {
+    if (this._clockScheduled) return
+    const running = () => this.route === 'plan' && this.plan?.episodes?.some((e) => e._elapsedAt)
+    if (!running()) return
+    this._clockScheduled = true
+    const tick = () => {
+      this._clockScheduled = false
+      if (!running()) return
+      this.nowTick = Date.now()
+      this._clockScheduled = true
+      sessionTimeout(tick, 1000)
+    }
+    sessionTimeout(tick, 1000)
   },
 
   listenedCount(plan) {
@@ -357,7 +412,7 @@ const appState = reactive({
     try {
       const result = await api.getPlan(id)
       if (!isCurrentSession(session)) return
-      this.plan = result
+      this.plan = this.stampElapsed(result)
       this.startPlanSSE(id)
     } catch (err) {
       if (!isCurrentSession(session)) return
@@ -374,7 +429,7 @@ const appState = reactive({
     try {
       const result = await api.getPlan(id)
       if (!isCurrentSession(session)) return
-      this.plan = result
+      this.plan = this.stampElapsed(result)
     } catch (err) {
       if (!isCurrentSession(session)) return
       console.warn('刷新计划详情失败', err)
@@ -410,8 +465,11 @@ const appState = reactive({
     if (!ep) return
 
     ep.status = data.status
-    if (data.stage) ep.stage = data.stage
-    if (data.percent != null) ep.percent = data.percent
+    ep.stage = data.gen_stage ?? null
+    ep.progress = data.progress ?? null
+    ep.elapsed_sec = data.elapsed_sec ?? null
+    ep._elapsedAt = ep.elapsed_sec != null ? Date.now() : 0
+    if (ep._elapsedAt) this.ensureElapsedClock()
     if (data.duration_sec != null) ep.duration_sec = data.duration_sec
 
     if (data.status === 'ready') {

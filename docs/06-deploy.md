@@ -85,7 +85,7 @@ chmod 600 .env
 # 推荐保持 WEB_HOST=127.0.0.1，由 §6 的 HTTPS 代理对外
 ```
 
-其余项（音色/响度/时长）保持现有值或默认值。不要打印 `.env` 来验收；确认 LLM 配置和 `AUTH_SECRET` 均已填写。空签名密钥仅使用进程随机值，重启会令 token 失效，不适合部署。
+其余项（音色/响度/时长）保持现有值或默认值。不要打印 `.env` 来验收；确认 LLM 配置和 `AUTH_SECRET` 均已填写。空签名密钥仅使用进程随机值，重启会令 token 失效，不适合部署；`WEB_HOST` 不是本机地址（127.0.0.1/localhost/::1）时，`run.py` 会直接拒绝启动。
 
 ### 步骤 5 · 建库（alembic 迁移）
 
@@ -97,7 +97,7 @@ chmod 600 .env
 
 升级已有库前必须停 Web/CLI worker 并备份 SQLite（含 WAL 状态，见 §7）和文件。迁移保留历史数据属主 `admin`（ID 1），初始密码为不可登录的锁定占位。新库同样预留该属主，不能用第一个普通用户接管历史数据。若遇到 schema 过旧、部分迁移或 admin/ID 1 冲突，**停止上线**，保留失败库和备份，排查冲突后重试；不要删除 user 表、强行 stamp head、手改归属或跳过校验。
 
-迁移成功后再交互设置密码（不回显、需确认），不要把明文密码放到命令参数/历史里：
+迁移成功后再交互设置密码（不回显、需确认），不要把明文密码放到命令参数/历史里。没有设过密码时，启动日志和登录页都会提示执行这条命令：
 
 ```bash
 .venv/bin/python -m drivecast reset-password admin
@@ -120,10 +120,11 @@ chmod 600 .env
 ### 步骤 7 · 跑测试（可选但建议）
 
 ```bash
-.venv/bin/python -m unittest discover -s tests
+.venv/bin/pip install pytest
+.venv/bin/python -m pytest -q
 ```
 
-**验收**：`OK`。测试数据库/文件使用临时目录，业务 API 测试显式配置真实认证 fixture，不依赖 pytest autouse 桩。已安装 pytest 时也可运行 `.venv/bin/python -m pytest -q`。
+**验收**：末行 `N passed`、无 failed。测试数据库/文件使用临时目录，业务 API 测试显式配置真实认证 fixture，不依赖 pytest autouse 桩。不要用 `unittest discover` 验收——它收集不到 `test_auth_bootstrap.py` 等 pytest 风格用例，会漏掉迁移与账号引导路径。
 
 ### 步骤 8 · 前台试跑
 
@@ -155,6 +156,9 @@ WorkingDirectory=/opt/drivecast
 ExecStart=/opt/drivecast/.venv/bin/python run.py
 Restart=always
 RestartSec=5
+# run.py 最多等 10s(WEB_GRACEFUL_SHUTDOWN_SEC)让 SSE 等长连接断开,再把在途 job 放回队列;
+# 留足余量,避免 systemd 在收尾前 SIGKILL
+TimeoutStopSec=30
 # 维护窗口暂停生成队列，可临时加：Environment=WORKER_ENABLED=false（不是只读）
 
 [Install]
@@ -210,14 +214,19 @@ location / {
 
 ## 7. 数据与备份
 
-- **全部状态在 `data/`**（SQLite + plans/scripts/tts/audio 文件）+ `.env`。两者都在 `.gitignore` 里，git 部署不会带走。
+- **全部状态在 `data/`**（SQLite + plans/scripts/tts/meta/audio 文件）+ `.env`。两者都在 `.gitignore` 里，git 部署不会带走。计划、脚本等 JSON 是运行必需的（打开计划、重试、重新合成都直接读），**只备份数据库和音频不能恢复**。
 - **迁移存量数据**（把开发机内容搬到服务器）：停服务后 `rsync -av data/ .env user@server:/opt/drivecast/`，再 `alembic upgrade head` 补齐 schema。
-- **日常备份**：
+- **日常备份**（服务不停也可执行）：
   ```bash
-  sqlite3 data/drivecast.db ".backup '/backup/drivecast-$(date +%F).db'"
-  tar czf /backup/drivecast-audio-$(date +%F).tgz data/audio/episodes/
+  .venv/bin/python scripts/backup.py --out /backup --keep 14
   ```
+  产出单个 `drivecast-YYYYmmdd-HHMMSS.tgz`：数据库用 SQLite 在线快照（含 WAL 未合并页），加上 `data/` 下全部 JSON 与成品音频；默认跳过可重建的 `audio/chunks` 中间片（需要时加 `--with-chunks`），并只保留最近 14 份。`.env` 含密钥，**不进备份包**，单独存到秘密管理器。
   SQLite 开着 WAL，**不要**直接 `cp data/drivecast.db`（会漏 WAL 未合并页）。
+- **定时**：`crontab -e` 加一行（每天 04:10）：
+  ```cron
+  10 4 * * * cd /opt/drivecast && .venv/bin/python scripts/backup.py --out /backup --keep 14 >> /var/log/drivecast-backup.log 2>&1
+  ```
+- **恢复**：停服务 → `tar xzf drivecast-XXXX.tgz -C /opt/drivecast`（覆盖 `data/`）→ 放回 `.env` → 启动（启动时自动迁移到 head）。恢复后抽查：`sqlite3 data/drivecast.db "pragma integrity_check"` 输出 `ok`。
 
 ## 8. 升级 / 回滚
 

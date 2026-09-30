@@ -91,6 +91,7 @@ class Settings(BaseSettings):
     # ---- Web(docs/04 §5 / docs/05 M3) ----
     web_host: str = "127.0.0.1"          # 仅绑本地,无鉴权单用户
     web_port: int = 8080
+    web_graceful_shutdown_sec: int = 10         # 关停时等长连接(SSE)结束的上限,超时强断
     static_dir: Path = PROJECT_ROOT / "static"
     sse_poll_interval_sec: float = 2.0
     worker_poll_interval_sec: float = 1.0
