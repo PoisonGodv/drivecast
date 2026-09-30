@@ -79,6 +79,7 @@ const appState = reactive({
   },
   creating: false,
   lastCreateAt: 0,
+  usage: null, // GET /api/usage;null=未加载/加载失败,不拦提交(以服务端 429 为准)
 
   // 计划详情
   plan: null,
@@ -163,6 +164,7 @@ const appState = reactive({
     }
 
     if (route === 'home') this.loadPlans()
+    if (route === 'create') this.loadUsage()
     if (route === 'plan' && params.id) this.loadPlan(params.id)
     if (route === 'play' && params.episodeId) this.enterPlayer(params.episodeId, params.plan)
     if (route === 'review') {
@@ -374,11 +376,36 @@ const appState = reactive({
   },
 
   /* ---------- 创建计划 ---------- */
+  get createRequestMinutes() {
+    return Number(this.createForm.episodeCount) * Number(this.createForm.targetMinutes)
+  },
+
+  get createOverQuota() {
+    const left = this.usage?.minutes_remaining
+    return left != null && this.createRequestMinutes > left
+  },
+
+  async loadUsage() {
+    const session = getSession()
+    try {
+      const result = await api.getUsage()
+      if (!isCurrentSession(session)) return
+      this.usage = result
+    } catch {
+      if (!isCurrentSession(session)) return
+      this.usage = null
+    }
+  },
+
   async submitCreate() {
     const session = getSession()
     const { title, direction, episodeCount, targetMinutes } = this.createForm
     if (!title.trim()) {
       this.showToast('请输入学习主题')
+      return
+    }
+    if (this.createOverQuota) {
+      this.showToast(`今日剩余额度 ${this.usage.minutes_remaining} 分钟，请减少集数或时长`)
       return
     }
     // 防抖:请求在途(creating)或 1.5s 内的重复提交一律忽略;
@@ -398,6 +425,7 @@ const appState = reactive({
     } catch (err) {
       if (!isCurrentSession(session)) return
       this.showToast(err.message)
+      if (err.status === 429) this.loadUsage()
     } finally {
       if (!isCurrentSession(session)) return
       this.creating = false

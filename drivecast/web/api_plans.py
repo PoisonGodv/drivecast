@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
+from .. import quota
 from ..auth import get_current_user
 from ..db import session
 from ..jobs import pipeline
@@ -147,15 +148,24 @@ async def create_plan(body: PlanCreate, user: User = Depends(get_current_user)) 
         )
 
     if existing is not None:
-        job_id = await pipeline.enqueue("plan", existing.ext_id, {
-            "plan_id": existing.ext_id,
-            "topic": topic.title,
-            "direction": topic.direction,
-            "episode_count": body.episode_count,
-            "target_minutes": body.target_minutes,
-        }, user_id=user.id)
+        # 大纲任务仍在途则 enqueue 幂等复用,不再计额
+        reuse = await quota.has_inflight("plan", existing.ext_id)
+        async with quota.reserve(user, 0 if reuse else quota.plan_request_minutes(
+                body.episode_count, body.target_minutes)):
+            job_id = await pipeline.enqueue("plan", existing.ext_id, {
+                "plan_id": existing.ext_id,
+                "topic": topic.title,
+                "direction": topic.direction,
+                "episode_count": body.episode_count,
+                "target_minutes": body.target_minutes,
+            }, user_id=user.id)
         return {"plan_id": existing.id, "job_id": job_id, "status": "pending", "job_ids": [job_id]}
 
+    async with quota.reserve(user, quota.plan_request_minutes(body.episode_count, body.target_minutes)):
+        return await _create_plan_placeholder(body, topic, user)
+
+
+async def _create_plan_placeholder(body: PlanCreate, topic: Topic, user: User) -> dict:
     plan_ext_id = await planner.new_plan_id()
     async with session() as s:
         placeholder = Plan(
@@ -207,9 +217,11 @@ async def retry_plan(plan_id: int, user: User = Depends(get_current_user)) -> di
             if last is None:
                 raise HTTPException(status_code=409, detail={"code": 409, "message": "找不到原始生成参数,请删除后重建"})
             payload = json.loads(last.payload)
-            fresh.status = "generating"
-            await s.commit()
-        job_id = await pipeline.enqueue("plan", plan_row.ext_id, payload, user_id=user.id)
+            async with quota.reserve(user, quota.plan_request_minutes(
+                    payload.get("episode_count"), payload.get("target_minutes"))):
+                fresh.status = "generating"
+                await s.commit()
+                job_id = await pipeline.enqueue("plan", plan_row.ext_id, payload, user_id=user.id)
     return {"plan_id": plan_id, "job_id": job_id, "status": "pending", "job_ids": [job_id]}
 
 @router.get("/plans")
@@ -286,7 +298,9 @@ async def generate_episode(episode_id: int, user: User = Depends(get_current_use
         raise HTTPException(status_code=404, detail={"code": 404, "message": "plan not found"})
     async with pipeline.get_plan_lifecycle_lock(plan.ext_id):
         await _assert_plan_active(plan)
-        job_id = await pipeline.enqueue_episode(plan.ext_id, ep.seq, ep.ext_id, user_id=user.id)
+        reuse = await quota.has_inflight("script", ep.ext_id)
+        async with quota.reserve(user, 0 if reuse else quota.episode_minutes(plan.ext_id, ep.seq)):
+            job_id = await pipeline.enqueue_episode(plan.ext_id, ep.seq, ep.ext_id, user_id=user.id)
     return {"episode_id": episode_id, "job_id": job_id, "status": "pending"}
 
 
@@ -299,7 +313,8 @@ async def generate_plan_all(plan_id: int, user: User = Depends(get_current_user)
     async with pipeline.get_plan_lifecycle_lock(plan_row.ext_id):
         await _assert_plan_active(plan_row)
         plan_rec = planner.load_plan(plan_row.ext_id)
-        job_ids = await pipeline.enqueue_plan_all(plan_rec, user_id=user.id)
+        async with quota.reserve(user, await quota.new_script_minutes(plan_rec)):
+            job_ids = await pipeline.enqueue_plan_all(plan_rec, user_id=user.id)
     status = "pending" if job_ids else "done"
     return {
         "plan_id": plan_id,
@@ -307,6 +322,12 @@ async def generate_plan_all(plan_id: int, user: User = Depends(get_current_user)
         "status": status,
         "job_ids": job_ids,
     }
+
+
+@router.get("/usage")
+async def get_usage(user: User = Depends(get_current_user)) -> dict:
+    """当前用户今日额度与用量;minutes_limit/remaining 为 null 表示不限额。"""
+    return await quota.today_usage(user)
 
 
 @router.get("/jobs/{job_id}", response_model=JobOut)
@@ -349,12 +370,14 @@ async def regenerate_episode(
                 Job.ref_id.in_([plan.ext_id, *refs]), Job.status.in_(("pending", "running"))).limit(1))
         if busy is not None:
             raise HTTPException(status_code=409, detail="计划仍有生成任务，请完成后再重新生成")
-        reason = (body.reason if body else "").strip()
-        if reason:
-            artifacts.append_errata(ep.ext_id, reason)
-        artifacts.backup_artifacts(ep.ext_id)
-        await set_episode_status(ep.ext_id, "pending")
-        job_id = await pipeline.enqueue_episode(plan.ext_id, ep.seq, ep.ext_id, user_id=user.id)
+        # 额度检查必须在备份/改状态之前:超额时旧产物原样保留
+        async with quota.reserve(user, quota.episode_minutes(plan.ext_id, ep.seq)):
+            reason = (body.reason if body else "").strip()
+            if reason:
+                artifacts.append_errata(ep.ext_id, reason)
+            artifacts.backup_artifacts(ep.ext_id)
+            await set_episode_status(ep.ext_id, "pending")
+            job_id = await pipeline.enqueue_episode(plan.ext_id, ep.seq, ep.ext_id, user_id=user.id)
     return {"episode_id": episode_id, "job_id": job_id, "status": "pending"}
 
 

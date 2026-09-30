@@ -8,6 +8,7 @@
   python -m drivecast dbsync                     # 存量文件产物导入 DB
   python -m drivecast create-user <username>     # 建登录用户(无注册接口)
   python -m drivecast reset-password <username>  # 重置密码(0006 后给 admin 后置密码)
+  python -m drivecast usage [--days N]           # 每用户每日用量(分钟/LLM tokens/TTS 字数)
 """
 from __future__ import annotations
 
@@ -228,6 +229,18 @@ async def cmd_reset_password(args) -> None:
         print("提示:已签发的旧 token 在自然过期前(最长 7 天)仍然有效。")
 
 
+async def cmd_usage(args) -> None:
+    from . import quota
+
+    rows = await quota.daily_report(args.days)
+    if not rows:
+        print(f"近 {args.days} 天无用量记录")
+        return
+    print(f"{'日期':<12}{'用户':<16}{'分钟':>8}{'LLM tokens':>14}{'TTS 字数':>12}")
+    for r in rows:
+        print(f"{r['date']:<12}{r['username']:<16}{r['minutes']:>8}{r['llm_tokens']:>14}{r['tts_chars']:>12}")
+
+
 def main() -> None:
     ensure_data_dirs()
     p = argparse.ArgumentParser(prog="drivecast", description="通勤技术播客生成器")
@@ -266,11 +279,15 @@ def main() -> None:
     sp = sub.add_parser("list", help="查看计划")
     sp.add_argument("plan_id")
 
+    sp = sub.add_parser("usage", help="每用户每日用量汇总")
+    sp.add_argument("--days", type=int, default=7, help="统计近 N 天(含今天),默认 7")
+
     args = p.parse_args()
     commands = {
         "plan": cmd_plan, "script": cmd_script, "tts": cmd_tts, "episode": cmd_episode,
         "generate": cmd_generate, "worker": cmd_worker, "dbsync": cmd_dbsync,
         "list": cmd_list, "create-user": cmd_create_user, "reset-password": cmd_reset_password,
+        "usage": cmd_usage,
     }
 
     async def run_command() -> None:

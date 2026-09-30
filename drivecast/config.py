@@ -102,6 +102,10 @@ class Settings(BaseSettings):
     auth_secret: str = ""               # JWT 签名密钥;空=进程级随机(重启后所有 token 失效),部署必配
     auth_token_expire_days: int = 7     # token 有效期(天);无刷新/撤销,自然过期
 
+    # ---- 额度(drivecast/quota.py)----
+    quota_daily_episode_minutes: int = Field(default=240, ge=0)  # 每用户每日可入队的集目标分钟数;0=不限
+    quota_exempt_usernames: str = "admin"                          # 逗号分隔,不受额度限制
+
     # ---- 路径 ----
     data_dir: Path = PROJECT_ROOT / "data"
 

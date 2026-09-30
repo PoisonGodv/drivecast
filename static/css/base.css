@@ -217,6 +217,16 @@ img {
   font-size: 0.9rem;
 }
 
+.quota-hint {
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.quota-hint.over {
+  color: var(--error);
+}
+
 .form-input,
 .form-select,
 .form-textarea {

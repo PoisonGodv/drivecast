@@ -60,7 +60,7 @@ async def test_create_user_first_reserves_locked_admin_and_unlocks(bootstrap_db)
     await init_db()
     await init_db()
     assert await rows("SELECT id, username, password_hash FROM user ORDER BY id") == before
-    assert await rows("SELECT version_num FROM alembic_version") == [("0006",)]
+    assert await rows("SELECT version_num FROM alembic_version") == [("0007",)]
 
 
 @async_test
@@ -165,7 +165,7 @@ def test_real_cli_entrypoint_initializes_before_creating_user(bootstrap_db, base
     assert [(u.id, u.username) for u in users] == [(1, "admin"), (2, "alice")]
     assert users[0].password_hash == "!locked"
     assert auth.verify_password("cli-integration-password", users[1].password_hash)
-    assert asyncio.run(rows("SELECT version_num FROM alembic_version")) == [("0006",)]
+    assert asyncio.run(rows("SELECT version_num FROM alembic_version")) == [("0007",)]
 
 
 @async_test

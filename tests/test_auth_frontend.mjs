@@ -460,3 +460,26 @@ test('cancel regenerate sends no request while confirmed empty reason is allowed
   assert.equal(b.calls.length, 1)
   assert.equal(JSON.parse(b.calls[0].init.body).reason, '')
 })
+
+test('create page shows remaining quota and blocks submit when the request exceeds it', async () => {
+  const b = await browser()
+  b.login()
+  b.fetchWith(async (url) => response(url === '/api/usage' ? { minutes_remaining: 50, minutes_limit: 240 } : {}))
+  await b.app.loadUsage()
+  assert.equal(b.app.usage.minutes_remaining, 50)
+  b.app.createForm = { title: 'T', direction: 'backend_arch', episodeCount: 6, targetMinutes: 15 }
+  assert.equal(b.app.createRequestMinutes, 90)
+  assert.equal(b.app.createOverQuota, true)
+  const before = b.calls.length
+  await b.app.submitCreate()
+  assert.equal(b.calls.length, before)
+  b.app.createForm.episodeCount = 4
+  b.app.createForm.targetMinutes = 10
+  assert.equal(b.app.createOverQuota, false)
+  b.app.usage = { minutes_remaining: null }
+  b.app.createForm.targetMinutes = 40
+  assert.equal(b.app.createOverQuota, false)
+  b.app.logout()
+  assert.equal(b.app.usage, null)
+  assert.equal(b.timers.size, 0)
+})

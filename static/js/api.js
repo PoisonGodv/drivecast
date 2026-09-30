@@ -110,6 +110,9 @@ export const api = {
 
   listPlans: () => request('/api/plans'),
 
+  // 今日额度与用量:minutes_limit/minutes_remaining 为 null 表示不限额
+  getUsage: () => request('/api/usage'),
+
   getPlan: (id) => request(`/api/plans/${id}`),
 
   // 永久删除计划:停止运行中任务、清理所有音频/脚本/题库/文件

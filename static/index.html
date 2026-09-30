@@ -174,9 +174,13 @@
             </div>
           </div>
         </div>
+        <p v-if="usage && usage.minutes_remaining != null" class="quota-hint" :class="{ over: createOverQuota }">
+          今日剩余额度 {{ usage.minutes_remaining }} 分钟 · 本次需要 {{ createRequestMinutes }} 分钟
+          <span v-if="createOverQuota">，超出额度，请减少集数或每集时长</span>
+        </p>
         <button
           @click="submitCreate"
-          :disabled="creating"
+          :disabled="creating || createOverQuota"
           class="btn btn-primary btn-lg btn-block"
         >
           {{ creating ? '创建中…' : '生成计划' }}

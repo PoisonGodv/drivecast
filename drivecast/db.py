@@ -127,12 +127,13 @@ def prepare_migration(sync_conn) -> None:
         "SELECT version_num FROM alembic_version"
     ).first():
         return
-    expected = set(Base.metadata.tables) - {"user"}
-    if tables not in (expected, expected | {"user"}):
+    # usage_event(0007)晚于 0005 基线,旧 create_all 库可以没有,标 0005 后由 0007 补建
+    expected = set(Base.metadata.tables) - {"user", "usage_event"}
+    if tables - {"usage_event"} not in (expected, expected | {"user"}):
         raise RuntimeError("未标记版本的数据库不是完整已知 schema；请备份并核查后显式设置正确 Alembic 基线")
     ownership = ("topic", "plan", "job", "review_replay", "review_settings")
     tenant_flags = []
-    for name in sorted(tables):
+    for name in sorted(tables - {"usage_event"}):
         actual = {c["name"]: c for c in inspector.get_columns(name)}
         model = Base.metadata.tables[name]
         required = set(model.columns.keys())
@@ -184,6 +185,7 @@ def _missing_runtime_schema(sync_conn) -> list[str]:
         "job": {"user_id"},
         "review_replay": {"user_id"},
         "review_settings": {"user_id"},
+        "usage_event": {"user_id", "kind", "amount", "ref_id"},
     }
     missing: list[str] = []
     for table, columns in required.items():
