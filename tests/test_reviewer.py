@@ -197,6 +197,74 @@ class ReviewerServiceTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ReviewerError):
             await review_script(self.script, self.fact_cards)
 
+    def _sectioned(self, body_len: int) -> dict:
+        body = "Redis 单线程执行命令。" * (body_len // 14)
+        sections = [{"key": f"S{i}", "title": f"段{i}", "content": f"第{i}段:{body}"} for i in range(5)]
+        return {
+            **self.script,
+            "content": "\n\n".join(s["content"] for s in sections),
+            "turns": [],
+            "sections": sections,
+        }
+
+    async def test_prompt_sends_body_once_without_json_dump(self) -> None:
+        fake = FakeProvider(LLMResult(content="", parsed=_FakeParsed("pass", []), model="m"))
+        _set_provider(fake)
+        script = self._sectioned(200)
+
+        await review_script(script, self.fact_cards)
+
+        self.assertEqual(len(fake.calls), 1)
+        user = fake.calls[0]["user"]
+        self.assertEqual(user.count("第3段:"), 1)  # 正文只出现一次(不再 content+sections 重复)
+        self.assertNotIn('"sections"', user)
+
+    async def test_long_script_reviewed_in_chunks_and_flags_merged(self) -> None:
+        from unittest.mock import patch
+
+        from drivecast.config import settings
+
+        hard = Flag(quote="h", type="hard", reason="r", suggestion="s")
+        soft = Flag(quote="s", type="soft", reason="r", suggestion="s")
+
+        class ChunkProvider:
+            def __init__(self):
+                self.calls = []
+
+            async def complete(self, **kwargs):
+                self.calls.append(kwargs["user"])
+                flags = [hard] if "第4段:" in kwargs["user"] else [soft]
+                return LLMResult(content="", parsed=_FakeParsed("pass", flags), model="m")
+
+        provider = ChunkProvider()
+        _set_provider(provider)
+        with patch.object(settings, "reviewer_chunk_chars", 2000):
+            result = await review_script(self._sectioned(1500), self.fact_cards)
+
+        self.assertGreater(len(provider.calls), 1)
+        joined = "".join(provider.calls)
+        for i in range(5):
+            self.assertEqual(joined.count(f"第{i}段:"), 1)  # 每段恰好被审一次
+        self.assertEqual(result.verdict, "block")
+        self.assertEqual(result.flags[0].type, "hard")
+        self.assertEqual(len(result.flags), len(provider.calls))
+
+    async def test_any_chunk_failure_raises_reviewer_error(self) -> None:
+        from unittest.mock import patch
+
+        from drivecast.config import settings
+
+        class HalfBroken:
+            async def complete(self, **kwargs):
+                if "第4段:" in kwargs["user"]:
+                    raise TimeoutError("chunk timeout")
+                return LLMResult(content="", parsed=_FakeParsed("pass", []), model="m")
+
+        _set_provider(HalfBroken())
+        with patch.object(settings, "reviewer_chunk_chars", 2000), \
+             self.assertRaises(ReviewerError):
+            await review_script(self._sectioned(1500), self.fact_cards)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#0f1115">
   <title>DriveCast</title>
-  <link rel="stylesheet" href="/static/css/base.css?v=20260930a">
-  <link rel="stylesheet" href="/static/css/components.css?v=20260930a">
-  <link rel="stylesheet" href="/static/css/review.css?v=20260930a">
+  <link rel="stylesheet" href="/static/css/base.css?v=20260930b">
+  <link rel="stylesheet" href="/static/css/components.css?v=20260930b">
+  <link rel="stylesheet" href="/static/css/review.css?v=20260930b">
 </head>
 <body>
   <div id="app">
@@ -255,9 +255,9 @@
                   >⚠️{{ ep.review_soft_flags }}</span>
                   <span
                     v-if="ep.review_pending_error"
-                    class="text-muted"
-                    title="审稿未完成(fail-open 放行),建议手动复核"
-                  >⚠️未审</span>
+                    class="badge badge-unreviewed"
+                    title="事实审稿失败(超时或模型异常)后被自动放行,内容未经核查,建议复核后再听"
+                  >未审稿</span>
                   <span v-if="ep.human_qc_passed" class="text-muted" title="已通过人工真听质检(docs/08)">✓已人审</span>
                 </div>
                 <div v-if="ep.status === 'failed' && ep.error" class="text-muted episode-error" :title="ep.error">
@@ -460,6 +460,9 @@
         <div v-if="player.transcriptOpen" class="transcript-drawer">
           <div v-if="player.scriptLoading" class="text-secondary">加载文稿…</div>
           <template v-else>
+            <div v-if="player.script?.review?.pending_error" class="transcript-unreviewed" role="note">
+              本集未经事实审稿(审稿调用失败后自动放行),内容可能有误,请谨慎参考。
+            </div>
             <div class="transcript-content">{{ player.script?.content_md || '暂无文稿' }}</div>
             <div v-if="player.script?.references?.length" class="script-references">
               <div class="script-references-title">参考文档</div>
@@ -903,6 +906,6 @@
     </div>
   </div>
 
-  <script type="module" src="/static/js/main.js?v=20260930a"></script>
+  <script type="module" src="/static/js/main.js?v=20260930b"></script>
 </body>
 </html>

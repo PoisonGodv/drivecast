@@ -62,44 +62,90 @@ def _set_provider(provider: OpenAICompatProvider | None) -> None:
     _provider = provider
 
 
-async def review_script(script: dict, fact_cards: list[dict]) -> ReviewResult:
-    """对单集脚本进行事实审查。
+_SPEAKER_CN = {"host": "主持人", "expert": "专家"}
 
-    Args:
-        script: 单集脚本 dict,至少包含 content/sections/turns/knowledge/questions。
-        fact_cards: 与该集主题相关的事实卡列表。
 
-    Returns:
-        ReviewResult,verdict 由 flags 中是否存在 hard 标记决定。
+def _section_text(section: dict) -> str:
+    if section.get("turns"):
+        return "\n".join(f"{_SPEAKER_CN.get(t.get('speaker'), t.get('speaker', ''))}:{t.get('text', '')}"
+                         for t in section["turns"])
+    return str(section.get("content") or "")
 
-    Raises:
-        ReviewerError: LLM 调用失败、超时或返回无法解析的结构化输出。
-    """
-    provider = _get_provider()
+
+def _review_chunks(script: dict, max_chars: int) -> list[tuple[str, str]]:
+    """正文按段切成若干审稿块,返回 [(块说明, 纯文本)];无 sections 的旧脚本退回整篇 content。"""
+    sections = [s for s in script.get("sections") or [] if _section_text(s).strip()]
+    if not sections:
+        return [("", str(script.get("content") or ""))]
+    blocks = [(f"{s.get('key', '')} {s.get('title', '')}".strip(), _section_text(s)) for s in sections]
+    chunks: list[tuple[list[str], list[str]]] = []
+    size = 0
+    for label, text in blocks:
+        if not chunks or size + len(text) > max_chars:
+            chunks.append(([], []))
+            size = 0
+        chunks[-1][0].append(label)
+        chunks[-1][1].append(f"【{label}】\n{text}")
+        size += len(text)
+    if len(chunks) == 1:
+        return [("", "\n\n".join(chunks[0][1]))]
+    return [(f"段落 {'、'.join(labels)}", "\n\n".join(texts)) for labels, texts in chunks]
+
+
+def _review_meta(script: dict) -> dict:
+    questions = [q.get("question", "") for q in script.get("questions") or [] if isinstance(q, dict)]
+    return {
+        "标题": script.get("title", ""),
+        "学习计划主题": script.get("user_topic", ""),
+        "本集知识点": "、".join(str(k) for k in script.get("knowledge") or []),
+        "自测题": ";".join(q for q in questions if q),
+    }
+
+
+async def _review_chunk(provider, meta: dict, body: str, fact_cards: list[dict], part: str) -> LLMResult:
     try:
         result: LLMResult = await provider.complete(
             system=prompts.REVIEWER_SYSTEM,
-            user=prompts.reviewer_user(script, fact_cards),
+            user=prompts.reviewer_user(meta, body, fact_cards, part=part),
             schema=_ReviewRaw,
             temperature=0.2,
         )
     except Exception as exc:
-        raise ReviewerError(f"审稿 LLM 调用失败: {exc}") from exc
+        raise ReviewerError(f"审稿 LLM 调用失败{f'({part})' if part else ''}: {exc}") from exc
+    if result.parsed is None:
+        raise ReviewerError(f"审稿 LLM 未返回结构化结果{f'({part})' if part else ''}")
+    return result
 
-    raw = result.parsed
-    if raw is None:
-        raise ReviewerError("审稿 LLM 未返回结构化结果")
 
+async def review_script(script: dict, fact_cards: list[dict]) -> ReviewResult:
+    """对单集脚本进行事实审查。
+
+    只送纯文本正文(不再整 dict 序列化,避免 content/turns/sections 三份重复);
+    正文超过 reviewer_chunk_chars 时按段切块并行审,合并 flags。任一块失败即整体 ReviewerError。
+
+    Raises:
+        ReviewerError: LLM 调用失败、超时或返回无法解析的结构化输出。
+    """
+    from ..concurrency import gather_cancel
+    from ..config import settings
+
+    provider = _get_provider()
+    meta = _review_meta(script)
+    chunks = _review_chunks(script, max(1000, settings.reviewer_chunk_chars))
+    results = await gather_cancel(*(
+        _review_chunk(provider, meta, body, fact_cards, part) for part, body in chunks))
+
+    raw_flags = [flag for r in results for flag in r.parsed.flags]
     # 判定规则:只要存在 hard 标记,无论 LLM 给的 verdict 是什么,都 block。
     verdict: Literal["pass", "block"] = (
-        "block" if any(flag.type == "hard" for flag in raw.flags) else "pass"
+        "block" if any(flag.type == "hard" for flag in raw_flags) else "pass"
     )
     # hard 优先,方便人工复核。
-    flags = sorted(raw.flags, key=lambda f: 0 if f.type == "hard" else 1)
+    flags = sorted(raw_flags, key=lambda f: 0 if f.type == "hard" else 1)
 
     return ReviewResult(
         verdict=verdict,
         flags=flags,
-        reviewer_model=result.model or "",
+        reviewer_model=results[0].model or "",
         reviewed_at=datetime.now(timezone.utc).isoformat(),
     )

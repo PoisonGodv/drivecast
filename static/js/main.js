@@ -8,10 +8,10 @@
 
 import { createApp, reactive } from '../vendor/petite-vue.js'
 import { getSession, isCurrentSession, onSessionChange, sessionTimeout } from './session.js'
-import { api, connectPlanEvents } from './api.js?v=20260930a'
-import { resetPlayer, player, loadEpisode, togglePlay, seek, seekToRatio, cycleRate, toggleTranscript, formatTime, nextEpisode, previousEpisode, dismissEndedPanel, replayFromEnded } from './player.js?v=20260930a'
-import { store } from './store.js?v=20260930a'
-import { useReview, isDue, formatDate, masteryLabels, directionNames } from './review.js?v=20260930a'
+import { api, connectPlanEvents } from './api.js?v=20260930b'
+import { resetPlayer, player, loadEpisode, togglePlay, seek, seekToRatio, cycleRate, toggleTranscript, formatTime, nextEpisode, previousEpisode, dismissEndedPanel, replayFromEnded } from './player.js?v=20260930b'
+import { store } from './store.js?v=20260930b'
+import { useReview, isDue, formatDate, masteryLabels, directionNames } from './review.js?v=20260930b'
 
 const DIRECTIONS = [
   { key: 'backend_arch', label: '后端/架构面试' },

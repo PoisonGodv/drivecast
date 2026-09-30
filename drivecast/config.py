@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     llm_max_concurrency: int = Field(default=6, ge=1, le=32)
     worker_text_concurrency: int = Field(default=2, ge=1, le=8)
     reviewer_enabled: bool = True   # 脚本事实审稿(docs/07 §3.1);REVIEWER_ENABLED=false 可关省一次 LLM 调用
+    reviewer_chunk_chars: int = 6000  # 单次审稿调用的正文字数上限,长集按段切块并行审
 
     # ---- TTS(docs/03 §3)----
     tts_provider: str = "edge"                    # edge(免费) | doubao(火山引擎豆包,docs/03 §3.5)

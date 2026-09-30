@@ -22,16 +22,20 @@ REVIEWER_SYSTEM = """你是 drivecast 的事实审稿人,任务是在脚本进�
 - 不要输出任何与 JSON 无关的内容。"""
 
 
-def reviewer_user(script: dict, fact_cards: list[dict]) -> str:
-    """把脚本与事实卡拼成审稿请求。"""
+def reviewer_user(meta: dict, body: str, fact_cards: list[dict], *, part: str = "") -> str:
+    """把脚本元数据、纯文本正文与事实卡拼成审稿请求。"""
     cards_text = json.dumps(fact_cards, ensure_ascii=False, indent=2) if fact_cards else "(本集未提供事实卡)"
-    script_text = json.dumps(script, ensure_ascii=False, indent=2)
+    meta_text = "\n".join(f"{k}: {v}" for k, v in meta.items() if v)
+    part_note = f"\n(本次只审{part};其余部分另行审查,不要因内容不完整而标记)" if part else ""
     return f"""请审查以下播客脚本的事实准确性。
 
 【事实卡】
 {cards_text}
 
-【待审脚本】
-{script_text}
+【脚本元数据】
+{meta_text}
+
+【待审正文】{part_note}
+{body}
 
 请按系统提示中的两步进行:先列出 checkable claims,再给出 verdict 与 flags。"""
