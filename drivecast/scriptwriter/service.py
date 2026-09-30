@@ -46,6 +46,10 @@ _SECTION_SHARE = {"S0": 1 / 15, "S1": 5 / 15, "S2": 4 / 15, "S3": 3 / 15, "S4": 
 class ScriptBlockedError(RuntimeError):
     """脚本被事实审稿拦截(hard 硬伤),job 层按普通失败走重试/失败路径(docs/07 §3.1)。"""
 
+    def __init__(self, message: str, flags: list | None = None) -> None:
+        super().__init__(message)
+        self.flags = flags or []
+
 
 def _episode_text(plan: PlanRec, ep: EpisodeRec) -> str:
     """提取 episode 主题文本,用于题库关键词匹配。"""
@@ -123,6 +127,73 @@ def save_script(episode_id: str, data: dict) -> None:
     )
 
 
+# ---------- 分段草稿:每段写完即落盘,重试只补缺段 ----------
+
+# 段间依赖:S3 以 S2 为上下文,S4 以 S1+S2 为上下文;上游重写则下游一并作废
+_SECTION_DEPENDENTS = {"S1": ("S4",), "S2": ("S3", "S4")}
+
+
+def _draft_fingerprint(ep: EpisodeRec, target_words: int) -> str:
+    import hashlib
+    raw = json.dumps([ep.model_dump(mode="json", exclude={"status", "scheduled_date"}),
+                      target_words, settings.section_max_words_per_agent],
+                     ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _load_draft(ep: EpisodeRec, target_words: int) -> dict:
+    """读草稿;大纲/字数预算变了则整份作废。"""
+    fresh = {"fingerprint": _draft_fingerprint(ep, target_words), "sections": {}, "fix_notes": {}}
+    path = settings.script_draft_path(ep.episode_id)
+    if not path.exists():
+        return fresh
+    try:
+        draft = json.loads(path.read_text("utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return fresh
+    if draft.get("fingerprint") != fresh["fingerprint"]:
+        return fresh
+    draft.setdefault("sections", {})
+    draft.setdefault("fix_notes", {})
+    return draft
+
+
+def _save_draft(episode_id: str, draft: dict) -> None:
+    ensure_data_dirs()
+    path = settings.script_draft_path(episode_id)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(draft, ensure_ascii=False), "utf-8")
+    tmp.replace(path)
+
+
+def _invalidate_sections(draft: dict, keys: set[str]) -> set[str]:
+    """作废指定段及其下游依赖段,返回实际作废的段。"""
+    dropped = set(keys)
+    for key in list(keys):
+        dropped.update(_SECTION_DEPENDENTS.get(key, ()))
+    for key in dropped:
+        draft["sections"].pop(key, None)
+    return dropped
+
+
+def _blocked_sections(sections: list[dict], hard_flags: list, script_format: str) -> dict[str, list]:
+    """按 quote 原文把 hard 硬伤定位回段;定位不到的归入 "*"(整集重写)。"""
+    texts = {}
+    for sec in sections:
+        if script_format == "dialogue":
+            texts[sec["key"]] = "\n".join(t["text"] for t in sec.get("turns", []))
+        else:
+            texts[sec["key"]] = sec.get("content", "")
+    located: dict[str, list] = {}
+    for flag in hard_flags:
+        quote = re.sub(r"\s+", "", flag.quote or "")
+        probes = [quote, quote[:20]] if quote else []
+        key = next((k for p in probes if p for k, text in texts.items()
+                    if p in re.sub(r"\s+", "", text)), "*")
+        located.setdefault(key, []).append(flag)
+    return located
+
+
 def _recap_questions(plan: PlanRec, seq: int) -> list[str]:
     """取上一集的 3 个自测题文本(第 1 集为空)→ 本集 S0 输入。"""
     if seq <= 1:
@@ -198,7 +269,7 @@ async def _review(data: dict, ep: EpisodeRec, matched: list[dict]) -> dict:
     if result.verdict == "block":
         hard = [f for f in result.flags if f.type == "hard"]
         summary = ";".join(f"{f.quote[:40]}→{f.reason[:60]}" for f in hard[:3])
-        raise ScriptBlockedError(f"{ep.episode_id} 事实审稿拦截({len(hard)} 处硬伤): {summary}")
+        raise ScriptBlockedError(f"{ep.episode_id} 事实审稿拦截({len(hard)} 处硬伤): {summary}", hard)
     return result.model_dump()
 
 
@@ -246,11 +317,16 @@ def _section_plain(section: ScriptSection, script_format: str) -> str:
 
 
 async def _gen_section_checked(plan: PlanRec, ep: EpisodeRec, key: str, target_words: int,
+                               *, fix_note: str = "",
                                **kwargs) -> tuple[ScriptSection, list[Question], int]:
-    """单段生成 + 门禁:结构为空或字数落在 0.75-1.25 倍区间外,带修正说明只重出本段一次。"""
+    """单段生成 + 门禁:结构为空或字数落在 0.75-1.25 倍区间外,带修正说明只重出本段一次。
+
+    fix_note:上次审稿在本段发现的硬伤,重写时必须改正。
+    """
     import time
     started = time.monotonic()
-    section, questions, usage = await _gen_section(plan, ep, key, target_words, **kwargs)
+    section, questions, usage = await _gen_section(plan, ep, key, target_words,
+                                                   extra_note=fix_note, **kwargs)
     n = _section_len(section, ep.script_format)
     if n == 0:
         raise ValueError(f"分段脚本 {key} 内容为空(script_format={ep.script_format})")
@@ -259,6 +335,8 @@ async def _gen_section_checked(plan: PlanRec, ep: EpisodeRec, key: str, target_w
               f"[{int(target_words * 0.75)}, {int(target_words * 1.25)}],本段修正重出")
         note = (f"上一次本段正文 {n} 字,不符合要求。请重写本段,严格控制在 "
                 f"{int(target_words * 0.9)} 到 {int(target_words * 1.1)} 字之间,宁精勿滥。")
+        if fix_note:
+            note = f"{fix_note}\n{note}"
         retry, retry_questions, retry_usage = await _gen_section(
             plan, ep, key, target_words, extra_note=note, **kwargs)
         usage += retry_usage
@@ -331,10 +409,11 @@ async def _gen_section_split(plan: PlanRec, ep: EpisodeRec, key: str, target_wor
 
 
 async def _gen_sections(plan: PlanRec, ep: EpisodeRec, target_words: int,
-                        s2_questions: list[dict]) -> ScriptOut:
+                        s2_questions: list[dict], draft: dict | None = None) -> ScriptOut:
     """分段 agent 编排:S0/S1/S2 并行 → S3 跟 S2 → S4 跟 S1+S2,拼回整集 ScriptOut。
 
     长集(S1/S2/S3 超单 agent 字数上限)由 _gen_section_split 内部再拆成并行子 agent。
+    draft 非 None 时:已落盘的段直接复用,新写完的段立即落盘(崩溃/审稿拦截后只补缺段)。
     """
     targets = {k: max(120, int(target_words * share)) for k, share in _SECTION_SHARE.items()}
     if ep.seq <= 1:
@@ -347,36 +426,53 @@ async def _gen_sections(plan: PlanRec, ep: EpisodeRec, target_words: int,
     s2_scope = [str(q.get("question", "")).strip() for q in s2_questions if q.get("question")]
     from ..concurrency import gather_cancel
     tasks = []
+    fix_notes = (draft or {}).get("fix_notes", {})
 
-    def start(aw):
-        task = asyncio.create_task(aw)
+    def start(key, factory):
+        async def run():
+            cached = (draft or {}).get("sections", {}).get(key)
+            if cached:
+                print(f"[script] {ep.episode_id} {key} 复用已落盘草稿")
+                return (ScriptSection.model_validate(cached["section"]),
+                        [Question.model_validate(q) for q in cached.get("questions", [])], 0)
+            result = await factory(fix_notes.get(key, ""))
+            if draft is not None:
+                draft["sections"][key] = {
+                    "section": result[0].model_dump(mode="json"),
+                    "questions": [q.model_dump(mode="json") for q in result[1]],
+                }
+                draft["fix_notes"].pop(key, None)
+                _save_draft(ep.episode_id, draft)
+            return result
+        task = asyncio.create_task(run())
         tasks.append(task)
         return task
 
-    start(_gen_section_checked(
-        plan, ep, "S0", targets["S0"], recap_questions=_recap_questions(plan, ep.seq)))
-    s1_task = start(_gen_section_split(
-        plan, ep, "S1", targets["S1"],
+    start("S0", lambda note: _gen_section_checked(
+        plan, ep, "S0", targets["S0"], fix_note=note,
+        recap_questions=_recap_questions(plan, ep.seq)))
+    s1_task = start("S1", lambda note: _gen_section_split(
+        plan, ep, "S1", targets["S1"], fix_note=note,
         scope_items=[str(o) for o in ep.objectives], scope_style="objectives"))
-    s2_task = start(_gen_section_split(
-        plan, ep, "S2", targets["S2"], scope_items=s2_scope, scope_style="questions",
+    s2_task = start("S2", lambda note: _gen_section_split(
+        plan, ep, "S2", targets["S2"], fix_note=note, scope_items=s2_scope, scope_style="questions",
         s2_grounding=_s2_grounding_prompt(s2_questions)))
 
-    async def gen_s3():
+    async def gen_s3(note):
         s2 = await s2_task
         return await _gen_section_split(
-            plan, ep, "S3", targets["S3"], scope_style="order",
+            plan, ep, "S3", targets["S3"], fix_note=note, scope_style="order",
             context=_section_plain(s2[0], ep.script_format))
 
-    async def gen_s4():
+    async def gen_s4(note):
         s1, s2 = await gather_cancel(s1_task, s2_task)
         return await _gen_section_split(
-            plan, ep, "S4", targets["S4"],
+            plan, ep, "S4", targets["S4"], fix_note=note,
             context=_section_plain(s1[0], ep.script_format)
                     + "\n\n" + _section_plain(s2[0], ep.script_format))
 
-    start(gen_s3())
-    start(gen_s4())
+    start("S3", gen_s3)
+    start("S4", gen_s4)
     runs = await gather_cancel(*tasks)
     s4 = runs[4]
     out = ScriptOut(
@@ -415,10 +511,60 @@ def _references_outro(references: list[dict]) -> str:
     return f"本期内容参考了以下资料:{spoken}。{closer}"
 
 
+_REVIEW_FIX_ROUNDS = 1  # 进程内定点修正轮数;仍被拦截则抛出,job 重试时从草稿续写
+
+
+def _apply_block_to_draft(draft: dict, sections: list[dict], exc: ScriptBlockedError,
+                          script_format: str) -> set[str]:
+    """把审稿硬伤定点回写草稿:作废涉事段(及下游),记录修正说明;返回作废的段。"""
+    located = _blocked_sections(sections, exc.flags, script_format)
+    keys = set(_SECTION_KEYS) if "*" in located or not located else set(located)
+    for key in keys:
+        flags = located.get(key) or located.get("*") or exc.flags
+        lines = [f"- 原文「{f.quote[:80]}」:{f.reason[:120]};改为:{f.suggestion[:120]}" for f in flags]
+        draft["fix_notes"][key] = "上一版本段被事实审稿判为硬伤,重写时必须改正且不得再出现:\n" + "\n".join(lines)
+    return _invalidate_sections(draft, keys)
+
+
 async def _write_script_with_refs(plan: PlanRec, ep: EpisodeRec, matched: list[dict], refs_task) -> dict:
     target_words = ep.target_minutes * settings.words_per_minute
-    out = await _gen_sections(plan, ep, target_words, matched)
+    draft = _load_draft(ep, target_words)
+    for round_no in range(_REVIEW_FIX_ROUNDS + 1):
+        out = await _gen_sections(plan, ep, target_words, matched, draft=draft)
+        data = _assemble_script(plan, ep, out, target_words)
+        if not settings.reviewer_enabled:
+            break
+        try:
+            data["review"] = await _review(data, ep, matched)
+            break
+        except ScriptBlockedError as exc:
+            dropped = _apply_block_to_draft(draft, data["sections"], exc, ep.script_format)
+            _save_draft(ep.episode_id, draft)
+            print(f"[script] {ep.episode_id} 审稿拦截,定点重写 {sorted(dropped)}")
+            if round_no >= _REVIEW_FIX_ROUNDS:
+                raise
+    references = await refs_task
+    data["references"] = references  # 供复习卡片/脚本页读原文;旧脚本无此字段,读取处用 .get
 
+    # 片尾参考文献口播(docs/03 §2):拼进文稿末尾(展示与音频一致),TTS 落成 S5 章节;
+    # 在审稿之后追加——口播内容确定性地来自已校验链接,无事实性风险,不送审
+    outro = _references_outro(references)
+    if outro:
+        data["refs_outro"] = outro
+        if ep.script_format == "dialogue":
+            data["content"] += f"\n\n主持人:{outro}"
+            data["turns"].append({"speaker": "host", "text": outro})
+        else:
+            data["content"] += f"\n\n{outro}"
+
+    save_script(ep.episode_id, data)
+    settings.script_draft_path(ep.episode_id).unlink(missing_ok=True)
+    _wipe_derived(ep.episode_id)  # 脚本变了,下游产物全部作废
+    await upsert_script(ep.episode_id, data)  # 双写 DB:script + question(docs/05 M2-5)
+    return data
+
+
+def _assemble_script(plan: PlanRec, ep: EpisodeRec, out: ScriptOut, target_words: int) -> dict:
     # 质量校验:整集字数明显缩水时告警(分段门禁已在各段内做过一轮修正重出)
     n_chars = len(out.content_md)
     if n_chars < target_words * 0.6:
@@ -428,7 +574,7 @@ async def _write_script_with_refs(plan: PlanRec, ep: EpisodeRec, matched: list[d
     while len(questions) < 3:  # LLM 少给了就占位,保证结构完整(M5 复习闭环依赖 3 题/集)
         questions.append(Question(qtype="concept", question="(本集自测题缺失,请重生成)", framework=[], difficulty="medium"))
 
-    data = {
+    return {
         "episode_id": ep.episode_id,
         "plan_id": plan.plan_id,
         "seq": ep.seq,
@@ -448,33 +594,14 @@ async def _write_script_with_refs(plan: PlanRec, ep: EpisodeRec, matched: list[d
         "status": "scripted",
     }
 
-    if settings.reviewer_enabled:
-        data["review"] = await _review(data, ep, matched)
-    references = await refs_task
-    data["references"] = references  # 供复习卡片/脚本页读原文;旧脚本无此字段,读取处用 .get
-
-    # 片尾参考文献口播(docs/03 §2):拼进文稿末尾(展示与音频一致),TTS 落成 S5 章节;
-    # 在审稿之后追加——口播内容确定性地来自已校验链接,无事实性风险,不送审
-    outro = _references_outro(references)
-    if outro:
-        data["refs_outro"] = outro
-        if ep.script_format == "dialogue":
-            data["content"] += f"\n\n主持人:{outro}"
-            data["turns"].append({"speaker": "host", "text": outro})
-        else:
-            data["content"] += f"\n\n{outro}"
-
-    save_script(ep.episode_id, data)
-    _wipe_derived(ep.episode_id)  # 脚本变了,下游产物全部作废
-    await upsert_script(ep.episode_id, data)  # 双写 DB:script + question(docs/05 M2-5)
-    return data
-
 
 async def write_script(plan: PlanRec, ep: EpisodeRec, *, force: bool = False) -> dict:
     """先并行猎取引用，正文通过审稿后才保存；失败回收所有请求。"""
     existing = load_script(ep.episode_id)
     if existing and not force:
         return existing
+    if force:
+        settings.script_draft_path(ep.episode_id).unlink(missing_ok=True)
     from ..concurrency import gather_cancel
     matched = _match_questions(plan, ep)
     keywords = sorted({str(t) for q in matched for t in q.get("topic", []) if t})

@@ -41,6 +41,7 @@ def append_errata(ep_ext_id: str, reason: str) -> list[dict]:
 
 def backup_artifacts(ep_ext_id: str) -> list[str]:
     """四类产物改名 .bak(存在才备份;旧 .bak 直接覆盖,只保留上一代,docs/07 §5)。"""
+    settings.script_draft_path(ep_ext_id).unlink(missing_ok=True)  # 勘误重写不得复用旧草稿
     backed: list[str] = []
     for path in (
         settings.script_path(ep_ext_id),
@@ -99,6 +100,7 @@ def delete_plan_artifacts(plan_ext_id: str, ep_ext_ids: list[str]) -> None:
     for ep_id in ep_ext_ids:
         for file_path in (
             settings.script_path(ep_id),
+            settings.script_draft_path(ep_id),
             settings.tts_path(ep_id),
             settings.meta_path(ep_id),
             settings.episode_audio_path(ep_id),

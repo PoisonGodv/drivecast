@@ -163,6 +163,98 @@ class WriteScriptReviewTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("review", data)
 
 
+class SequenceReviewer:
+    """按调用次序返回预设审稿结果。"""
+
+    def __init__(self, *raws) -> None:
+        self.raws = list(raws)
+        self.calls = 0
+
+    async def complete(self, **kwargs) -> LLMResult:
+        raw = self.raws[min(self.calls, len(self.raws) - 1)]
+        self.calls += 1
+        return LLMResult(content="", parsed=raw, usage_tokens=1, model="fake")
+
+
+class SectionDraftTest(unittest.IsolatedAsyncioTestCase):
+    """写稿按段落盘:审稿拦截只重写涉事段及其下游,job 重试从草稿续写。"""
+
+    BAD = "SETNX 可以不加过期时间"
+
+    async def asyncSetUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.patches = [
+            patch.object(settings, "data_dir", Path(self.tmp.name)),
+            patch.object(settings, "reviewer_enabled", True),
+            patch.object(settings, "ref_hunter_enabled", False),
+            patch("drivecast.scriptwriter.service.upsert_script", new=AsyncMock()),
+            patch.object(script_service, "_gen_section_checked", side_effect=self._section),
+            patch.object(script_service, "_gen_section_split", side_effect=self._section),
+        ]
+        for p in self.patches:
+            p.start()
+        self.calls: list[tuple[str, str]] = []
+        self.bad_keys = {"S1"}
+        self.stubborn = False
+
+    async def asyncTearDown(self) -> None:
+        for p in reversed(self.patches):
+            p.stop()
+        reviewer_service._set_provider(None)
+        self.tmp.cleanup()
+
+    async def _section(self, plan, ep, key, target, *, fix_note="", **kwargs):
+        self.calls.append((key, fix_note))
+        text = f"这是第{key[1]}段的正文内容。" + (
+            self.BAD if key in self.bad_keys and (self.stubborn or not fix_note) else "")
+        questions = _fake_script_out().questions if key == "S4" else []
+        return ScriptSection(key=key, title=key, content=text), questions, 1
+
+    async def _write(self) -> dict:
+        plan, ep = WriteScriptReviewTest._plan_ep()
+        return await script_service.write_script(plan, ep)
+
+    async def test_block_rewrites_only_offending_section_and_dependents(self) -> None:
+        reviewer = SequenceReviewer(_review_raw("hard"),
+                                    reviewer_service._ReviewRaw(verdict="pass", flags=[]))
+        reviewer_service._set_provider(reviewer)
+        data = await self._write()
+
+        rewritten = [k for k, _ in self.calls[5:]]
+        self.assertEqual(sorted(rewritten), ["S1", "S4"])  # S4 依赖 S1,一并重写
+        fix = dict(self.calls[5:])["S1"]
+        self.assertIn(self.BAD, fix)
+        self.assertNotIn(self.BAD, data["content"])
+        self.assertEqual(data["review"]["verdict"], "pass")
+        self.assertFalse(settings.script_draft_path("ep_rev_01").exists())
+
+    async def test_job_retry_resumes_from_draft(self) -> None:
+        reviewer_service._set_provider(SequenceReviewer(_review_raw("hard")))
+        self.stubborn = True
+        # 修正后仍被拦截 → 抛出,草稿保留未涉事段
+        with self.assertRaises(ScriptBlockedError):
+            await self._write()
+        self.assertFalse(settings.script_path("ep_rev_01").exists())
+        self.assertTrue(settings.script_draft_path("ep_rev_01").exists())
+
+        self.calls.clear()
+        self.stubborn = False
+        reviewer_service._set_provider(SequenceReviewer(
+            reviewer_service._ReviewRaw(verdict="pass", flags=[])))
+        data = await self._write()
+        self.assertEqual(sorted(k for k, _ in self.calls), ["S1", "S4"])
+        self.assertIn(self.BAD, dict(self.calls)["S1"])  # 续写涉事段携带修正说明
+        self.assertEqual(data["review"]["verdict"], "pass")
+
+    async def test_unlocatable_flag_rewrites_everything(self) -> None:
+        flag = reviewer_service.Flag(quote="稿子里没有这句", type="hard", reason="r", suggestion="s")
+        reviewer_service._set_provider(SequenceReviewer(
+            reviewer_service._ReviewRaw(verdict="block", flags=[flag]),
+            reviewer_service._ReviewRaw(verdict="pass", flags=[])))
+        await self._write()
+        self.assertEqual(sorted(k for k, _ in self.calls[5:]), ["S0", "S1", "S2", "S3", "S4"])
+
+
 # ---------- API:regenerate / qc / script 透传 ----------
 
 class RegenerateQcApiTest(unittest.TestCase):

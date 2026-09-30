@@ -114,6 +114,9 @@ class Settings(BaseSettings):
     def script_path(self, episode_id: str) -> Path:
         return self.data_dir / "scripts" / f"{episode_id}.script.json"
 
+    def script_draft_path(self, episode_id: str) -> Path:
+        return self.data_dir / "scripts" / f"{episode_id}.draft.json"
+
     def tts_path(self, episode_id: str) -> Path:
         return self.data_dir / "tts" / f"{episode_id}.tts.json"
 
