@@ -15,7 +15,7 @@ from ..auth import get_current_user, login_ready_usernames
 from ..config import ensure_data_dirs, settings
 from ..db import close_db, init_db
 from ..jobs import worker
-from . import api_audio, api_auth, api_outline, api_plans, api_review
+from . import api_audio, api_auth, api_directions, api_outline, api_plans, api_review
 
 # uvicorn access log 会打出完整 query(SSE/audio 的 ?token= 会泄进日志),
 # 给 uvicorn.access 挂 logger 级过滤器把 token 值替换成 ***。装在 app 模块级:
@@ -89,6 +89,7 @@ app.include_router(api_plans.router, dependencies=[Depends(get_current_user)])
 app.include_router(api_outline.router, dependencies=[Depends(get_current_user)])
 app.include_router(api_audio.router, dependencies=[Depends(get_current_user)])
 app.include_router(api_review.router, dependencies=[Depends(get_current_user)])
+app.include_router(api_directions.router, dependencies=[Depends(get_current_user)])
 
 class NoCacheStaticFiles(StaticFiles):
     """无构建前端禁止强缓存,确保更新即生效,彻底杜绝 Safari 混用旧 JS。"""

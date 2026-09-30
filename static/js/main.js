@@ -83,6 +83,8 @@ const appState = reactive({
   creating: false,
   lastCreateAt: 0,
   usage: null, // GET /api/usage;null=未加载/加载失败,不拦提交(以服务端 429 为准)
+  // 方向列表以服务端可靠性标注为准(/api/directions),拉取失败回退本地常量
+  directionOptions: DIRECTIONS.map((d) => ({ ...d, available: true, experimental: false, reason: '' })),
 
   // 计划详情
   plan: null,
@@ -169,7 +171,10 @@ const appState = reactive({
     }
 
     if (route === 'home') this.loadPlans()
-    if (route === 'create') this.loadUsage()
+    if (route === 'create') {
+      this.loadUsage()
+      this.loadDirections()
+    }
     if (route === 'plan' && params.id) this.loadPlan(params.id)
     if (route === 'play' && params.episodeId) this.enterPlayer(params.episodeId, params.plan)
     if (route === 'review') {
@@ -400,6 +405,30 @@ const appState = reactive({
       if (!isCurrentSession(session)) return
       this.usage = null
     }
+  },
+
+  async loadDirections() {
+    const session = getSession()
+    try {
+      const list = await api.listDirections()
+      if (!isCurrentSession(session) || !Array.isArray(list) || !list.length) return
+      this.directionOptions = list
+      const current = list.find((d) => d.key === this.createForm.direction)
+      if (!current?.available) {
+        const first = list.find((d) => d.available)
+        if (first) this.createForm.direction = first.key
+      }
+    } catch {
+      // 保留本地回退列表,不打扰用户
+    }
+  },
+
+  pickDirection(d) {
+    if (!d.available) {
+      this.showToast(d.reason || '该方向暂不可用')
+      return
+    }
+    this.createForm.direction = d.key
   },
 
   async submitCreate() {

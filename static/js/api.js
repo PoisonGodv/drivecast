@@ -103,6 +103,8 @@ export const api = {
     }),
 
   // 主题 / 计划
+  listDirections: () => request('/api/directions'),
+
   createTopic: (title, direction) =>
     request('/api/topics', {
       method: 'POST',

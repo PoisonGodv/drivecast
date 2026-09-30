@@ -25,6 +25,7 @@ from ..persist import (
 )
 from ..planner import service as planner
 from ..scriptwriter import service as scriptwriter
+from .api_directions import ensure_direction_available
 
 router = APIRouter(prefix="/api", tags=["plans"])
 
@@ -110,6 +111,7 @@ class ScriptOut(BaseModel):
 @router.post("/topics", response_model=TopicOut, status_code=201)
 async def create_topic(body: TopicCreate, user: User = Depends(get_current_user)) -> dict:
     """创建主题(docs/02 §4);归属当前用户。"""
+    ensure_direction_available(body.direction)
     async with session() as s:
         t = Topic(title=body.title, direction=body.direction, user_id=user.id)
         s.add(t)
@@ -137,6 +139,7 @@ async def create_plan(body: PlanCreate, user: User = Depends(get_current_user)) 
         )
         if topic is None:
             raise HTTPException(status_code=404, detail={"code": 404, "message": "topic not found"})
+        ensure_direction_available(topic.direction)
 
         # 服务端幂等兜底:同主题已有生成中的计划直接复用(配合前端防抖)
         existing = await s.scalar(
