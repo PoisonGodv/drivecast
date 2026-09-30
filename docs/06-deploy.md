@@ -194,7 +194,7 @@ sudo systemctl status drivecast --no-pager     # Active: active (running)
 | `db` | 数据库可查询 |
 | `worker` | `WORKER_ENABLED=true` 时常驻消费 task 存活（关闭消费时恒为 true） |
 | `disk` | `data/` 所在盘空闲 ≥ `DISK_MIN_FREE_MB`（默认 1024） |
-| `queue` | 最老 pending job 等待 < `QUEUE_STALL_ALERT_SEC`（默认 3600 秒），或消费已关闭 |
+| `queue` | 没有积压；或有积压但 `QUEUE_STALL_ALERT_SEC`（默认 3600 秒）内有 job 被认领或完成；或消费已关闭。长队列正常排队不算异常 |
 
 `status`：db 或 worker 故障为 `down`（HTTP 503，应重启/报警）；仅 disk/queue 异常为 `degraded`（HTTP 200，需人工关注）；全部正常为 `ok`。外部监控（uptime-kuma、云拨测等）探测该接口即可。
 
